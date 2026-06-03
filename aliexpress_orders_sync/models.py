@@ -18,3 +18,4 @@ class Order:
     responsible: str
     delivery_status: str
     tracking_number: str
+    payment_method: str = ""

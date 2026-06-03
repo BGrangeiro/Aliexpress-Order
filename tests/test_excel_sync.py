@@ -21,6 +21,7 @@ def test_sync_creates_updates_and_styles_workbook(tmp_path):
         responsible="Conta A",
         delivery_status="Cancelado",
         tracking_number="LP123456789CN",
+        payment_method="Pix",
     )
 
     created, updated = sync_orders_to_excel([order], excel_path)
@@ -49,6 +50,8 @@ def test_sync_creates_updates_and_styles_workbook(tmp_path):
     assert sheet["G2"].value == "Entregue"
     assert sheet["H2"].value == "1234567890"
     assert sheet["I2"].value == "LP123456789CN"
+    assert sheet["J1"].value == "Forma de Pagamento"
+    assert sheet["J2"].value == "Pix"
 
 
 def test_sync_normalizes_canceled_status_and_empty_description(tmp_path):
@@ -98,3 +101,64 @@ def test_sync_updates_same_fixed_workbook_with_account_value(tmp_path):
     assert sheet.max_row == 2
     assert sheet["F2"].value == "Conta A"
     assert sheet["G2"].value == "Completed"
+
+
+def test_sync_sorts_by_date_and_removes_orders_before_2026(tmp_path):
+    excel_path = tmp_path / "pedidos.xlsx"
+    old_order = Order(
+        order_id="old-2025",
+        order_date=date(2025, 12, 31),
+        item_description="Pedido antigo",
+        quantity=1,
+        total_value=Decimal("1.00"),
+        currency="BRL",
+        responsible="neto",
+        delivery_status="Completed",
+        tracking_number="",
+    )
+    neto_order = Order(
+        order_id="neto-2026-03",
+        order_date=date(2026, 3, 18),
+        item_description="Pedido neto",
+        quantity=1,
+        total_value=Decimal("2.00"),
+        currency="BRL",
+        responsible="neto",
+        delivery_status="Completed",
+        tracking_number="",
+    )
+    riquelme_order = Order(
+        order_id="riquelme-2026-06",
+        order_date=date(2026, 6, 1),
+        item_description="Pedido riquelme",
+        quantity=1,
+        total_value=Decimal("3.00"),
+        currency="BRL",
+        responsible="riquelme",
+        delivery_status="Awaiting delivery",
+        tracking_number="",
+    )
+    neto_same_date = Order(
+        order_id="neto-2026-06",
+        order_date=date(2026, 6, 1),
+        item_description="Pedido neto mesma data",
+        quantity=1,
+        total_value=Decimal("4.00"),
+        currency="BRL",
+        responsible="neto",
+        delivery_status="Completed",
+        tracking_number="",
+    )
+
+    sync_orders_to_excel([old_order, neto_order], excel_path)
+    sync_orders_to_excel([riquelme_order, neto_same_date], excel_path)
+
+    workbook = load_workbook(excel_path, data_only=False)
+    sheet = workbook.active
+
+    order_ids = [sheet.cell(row=row, column=8).value for row in range(2, sheet.max_row + 1)]
+    dates = [sheet.cell(row=row, column=1).value.date() for row in range(2, sheet.max_row + 1)]
+
+    assert "old-2025" not in order_ids
+    assert dates == [date(2026, 6, 1), date(2026, 6, 1), date(2026, 3, 18)]
+    assert set(order_ids[:2]) == {"riquelme-2026-06", "neto-2026-06"}

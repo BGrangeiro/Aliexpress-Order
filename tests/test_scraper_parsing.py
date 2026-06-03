@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from aliexpress_orders_sync.config import Settings
-from aliexpress_orders_sync.scraper import _parse_order_block, _parse_tracking_number
+from aliexpress_orders_sync.scraper import _parse_order_block, _parse_payment_method, _parse_tracking_number
 
 
 def _settings(tmp_path) -> Settings:
@@ -138,3 +138,13 @@ def test_parse_tracking_number_from_order_details_text():
     """
 
     assert _parse_tracking_number(text) == "888002028480977"
+
+
+def test_parse_payment_method_from_order_details_text():
+    text = """
+    Order details
+    Payment method: Pix
+    Payment time: Jun 1, 2026
+    """
+
+    assert _parse_payment_method(text) == "Pix"

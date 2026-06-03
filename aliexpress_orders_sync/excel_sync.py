@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 from .models import Order
 
@@ -18,6 +20,7 @@ HEADERS = [
     "Status de Entrega",
     "Número do Pedido",
     "Nº Rastreio",
+    "Forma de Pagamento",
 ]
 
 DESCRIPTION_COLUMN = 2
@@ -28,6 +31,7 @@ RESPONSIBLE_COLUMN = 6
 STATUS_COLUMN = 7
 ORDER_ID_COLUMN = 8
 TRACKING_COLUMN = 9
+PAYMENT_METHOD_COLUMN = 10
 
 HEADER_FILL = PatternFill("solid", fgColor="2F6F57")
 HEADER_FONT = Font(bold=True, color="FFFFFF")
@@ -35,6 +39,7 @@ SOFT_GRID = Side(style="thin", color="E8EEF2")
 SOFT_BORDER = Border(left=SOFT_GRID, right=SOFT_GRID, top=SOFT_GRID, bottom=SOFT_GRID)
 WHITE_FILL = PatternFill("solid", fgColor="FFFFFF")
 ZEBRA_FILL = PatternFill("solid", fgColor="F7FAF9")
+ORDER_DATE_CUTOFF = date(2026, 1, 1)
 
 
 def sync_orders_to_excel(orders: list[Order], excel_path: Path) -> tuple[int, int]:
@@ -51,7 +56,10 @@ def sync_orders_to_excel(orders: list[Order], excel_path: Path) -> tuple[int, in
             workbook.save(excel_path)
         return 0, 0
 
+    orders = [order for order in orders if _is_on_or_after_cutoff(order.order_date)]
+
     _ensure_schema(sheet)
+    _remove_orders_before_cutoff(sheet)
 
     existing_rows = _order_id_to_row(sheet)
     created = 0
@@ -71,6 +79,8 @@ def sync_orders_to_excel(orders: list[Order], excel_path: Path) -> tuple[int, in
             existing_rows[order.order_id] = row
             created += 1
 
+    _remove_orders_before_cutoff(sheet)
+    _sort_rows_by_order_date(sheet)
     _format_sheet(sheet)
     _force_formula_recalculation(workbook)
     workbook.save(excel_path)
@@ -85,6 +95,9 @@ def _create_workbook() -> Workbook:
 
 def _ensure_schema(sheet) -> None:
     current_headers = [sheet.cell(row=1, column=index).value for index in range(1, len(HEADERS) + 1)]
+    if current_headers[: len(HEADERS) - 1] == HEADERS[:-1]:
+        _ensure_header(sheet)
+        return
     if current_headers != HEADERS:
         sheet.delete_rows(1, sheet.max_row)
         sheet.data_validations.dataValidation = []
@@ -111,6 +124,70 @@ def _order_id_to_row(sheet) -> dict[str, int]:
     return mapping
 
 
+def _remove_orders_before_cutoff(sheet) -> None:
+    for row in range(sheet.max_row, 1, -1):
+        order_date = _coerce_date(sheet.cell(row=row, column=1).value)
+        if order_date and order_date < ORDER_DATE_CUTOFF:
+            sheet.delete_rows(row)
+
+
+def _sort_rows_by_order_date(sheet) -> None:
+    if sheet.max_row <= 2:
+        return
+
+    rows = []
+    for row in range(2, sheet.max_row + 1):
+        values = [sheet.cell(row=row, column=column).value for column in range(1, len(HEADERS) + 1)]
+        number_formats = [sheet.cell(row=row, column=column).number_format for column in range(1, len(HEADERS) + 1)]
+        if any(value is not None for value in values):
+            rows.append((values, number_formats))
+
+    rows.sort(
+        key=lambda item: (
+            _date_sort_value(item[0][0]),
+            str(item[0][RESPONSIBLE_COLUMN - 1] or "").lower(),
+            str(item[0][ORDER_ID_COLUMN - 1] or ""),
+        ),
+        reverse=True,
+    )
+
+    if sheet.max_row > 1:
+        sheet.delete_rows(2, sheet.max_row - 1)
+
+    for row_index, (values, number_formats) in enumerate(rows, start=2):
+        for column_index, value in enumerate(values, start=1):
+            if column_index == UNIT_VALUE_COLUMN:
+                value = f"=D{row_index}/C{row_index}"
+            cell = sheet.cell(row=row_index, column=column_index, value=value)
+            cell.number_format = number_formats[column_index - 1]
+        sheet.cell(row=row_index, column=1).number_format = "DD/MM/YYYY"
+
+
+def _date_sort_value(value) -> int:
+    order_date = _coerce_date(value)
+    return order_date.toordinal() if order_date else 0
+
+
+def _is_on_or_after_cutoff(value) -> bool:
+    order_date = _coerce_date(value)
+    return order_date is None or order_date >= ORDER_DATE_CUTOFF
+
+
+def _coerce_date(value) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        for pattern in ("%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(value, pattern).date()
+            except ValueError:
+                continue
+    return None
+
+
 def _write_order(sheet, row: int, order: Order) -> None:
     total_value = _decimal_to_float(order.total_value)
     quantity = max(1, int(order.quantity or 1))
@@ -124,6 +201,7 @@ def _write_order(sheet, row: int, order: Order) -> None:
     sheet.cell(row=row, column=STATUS_COLUMN, value=_normalize_status(order.delivery_status))
     sheet.cell(row=row, column=ORDER_ID_COLUMN, value=order.order_id)
     sheet.cell(row=row, column=TRACKING_COLUMN, value=order.tracking_number or "")
+    sheet.cell(row=row, column=PAYMENT_METHOD_COLUMN, value=order.payment_method or "")
 
     sheet.cell(row=row, column=1).number_format = "DD/MM/YYYY"
     sheet.cell(row=row, column=TOTAL_COLUMN).number_format = _money_format(order.currency)
@@ -142,13 +220,15 @@ def _format_sheet(sheet) -> None:
         "G": 24,
         "H": 24,
         "I": 28,
+        "J": 22,
     }
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width
     sheet.row_dimensions[1].height = 28
     _align_cells(sheet)
     _style_rows(sheet)
-    sheet.auto_filter.ref = f"A1:I{max(sheet.max_row, 1)}"
+    last_column = get_column_letter(len(HEADERS))
+    sheet.auto_filter.ref = f"A1:{last_column}{max(sheet.max_row, 1)}"
 
 
 def _align_cells(sheet) -> None:

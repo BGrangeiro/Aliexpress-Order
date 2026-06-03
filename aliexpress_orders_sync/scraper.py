@@ -31,6 +31,10 @@ TRACKING_NUMBER_RE = re.compile(
     r"(?:Tracking\s*(?:number|no\.?)|Numero\s*de\s*rastreio|Código\s*de\s*rastreio|Codigo\s*de\s*rastreio)\s*:?\s*([A-Z0-9][A-Z0-9\-]{6,})",
     re.I,
 )
+PAYMENT_METHOD_LABEL_RE = re.compile(
+    r"(Payment\s*method|M[eé]todo\s*de\s*pagamento|Metodo\s*de\s*pagamento|Forma\s*de\s*pagamento)",
+    re.I,
+)
 QUANTITY_RE = re.compile(r"(?:Qty|Quantidade|Qtd)\D*(\d+)", re.I)
 UNIT_PRICE_QUANTITY_RE = re.compile(
     r"(?:R\$|US\$|\$|BRL|USD)\s*[\d.,]+\s*x\s*(\d+)\b|[\d.,]+\s*(?:BRL|USD)\s*x\s*(\d+)\b",
@@ -134,7 +138,7 @@ def fetch_orders(settings: Settings) -> list[Order]:
             account_id = _resolve_account_id(page, settings)
             orders = _extract_orders_from_page(page, settings)
             orders = [replace(order, responsible=account_id) for order in orders]
-            orders = _enrich_orders_with_tracking(page, orders, settings.orders_url)
+            orders = _enrich_orders_with_order_details(page, orders, settings.orders_url)
             # Do not close a CDP-connected browser: keeping the real profile open
             # helps Chrome persist cookies just like a normal browsing session.
             return orders
@@ -147,7 +151,7 @@ def fetch_orders(settings: Settings) -> list[Order]:
         account_id = _resolve_account_id(page, settings)
         orders = _extract_orders_from_page(page, settings)
         orders = [replace(order, responsible=account_id) for order in orders]
-        orders = _enrich_orders_with_tracking(page, orders, settings.orders_url)
+        orders = _enrich_orders_with_order_details(page, orders, settings.orders_url)
         context.close()
         return orders
 
@@ -395,7 +399,7 @@ def _detect_account_id(page: Page) -> str:
         return ""
 
 
-def _enrich_orders_with_tracking(page: Page, orders: list[Order], orders_url: str) -> list[Order]:
+def _enrich_orders_with_order_details(page: Page, orders: list[Order], orders_url: str) -> list[Order]:
     if not orders:
         return orders
 
@@ -403,19 +407,30 @@ def _enrich_orders_with_tracking(page: Page, orders: list[Order], orders_url: st
     enriched: list[Order] = []
 
     for index, order in enumerate(orders, start=1):
-        print(f"Buscando rastreio {index}/{len(orders)} - pedido {order.order_id}...")
+        print(f"Buscando detalhes {index}/{len(orders)} - pedido {order.order_id}...")
         tracking_number = order.tracking_number
-        if not tracking_number:
+        payment_method = order.payment_method
+        if not tracking_number or not payment_method:
             detail_url = detail_urls.get(order.order_id)
             if detail_url:
-                tracking_number = _fetch_tracking_from_url(page.context, detail_url)
+                tracking_number, payment_method = _fetch_order_details_from_url(page.context, detail_url)
             else:
-                tracking_number = _fetch_tracking_by_click(page, order.order_id, orders_url)
+                tracking_number, payment_method = _fetch_order_details_by_click(page, order.order_id, orders_url)
         if tracking_number:
             print(f"  Rastreio encontrado: {tracking_number}")
         else:
             print("  Rastreio não encontrado.")
-        enriched.append(replace(order, tracking_number=tracking_number or ""))
+        if payment_method:
+            print(f"  Pagamento encontrado: {payment_method}")
+        else:
+            print("  Pagamento não encontrado.")
+        enriched.append(
+            replace(
+                order,
+                tracking_number=tracking_number or "",
+                payment_method=payment_method or "",
+            )
+        )
 
     return enriched
 
@@ -447,25 +462,25 @@ def _detail_urls_by_order_id(page: Page) -> dict[str, str]:
         return {}
 
 
-def _fetch_tracking_from_url(context: BrowserContext, detail_url: str) -> str:
+def _fetch_order_details_from_url(context: BrowserContext, detail_url: str) -> tuple[str, str]:
     detail_page = context.new_page()
     try:
         detail_page.goto(detail_url, wait_until="domcontentloaded", timeout=90_000)
         detail_page.wait_for_timeout(2_000)
-        return _extract_tracking_from_detail_page(detail_page)
+        return _extract_order_details_from_detail_page(detail_page)
     except Exception:
-        return ""
+        return "", ""
     finally:
         detail_page.close()
 
 
-def _fetch_tracking_by_click(page: Page, order_id: str, orders_url: str) -> str:
+def _fetch_order_details_by_click(page: Page, order_id: str, orders_url: str) -> tuple[str, str]:
     detail_page = page
     opened_new_page = False
     try:
         pages_before = set(page.context.pages)
         if not _click_order_details(page, order_id):
-            return ""
+            return "", ""
         page.wait_for_timeout(2_500)
 
         new_pages = [candidate for candidate in page.context.pages if candidate not in pages_before]
@@ -480,9 +495,9 @@ def _fetch_tracking_by_click(page: Page, order_id: str, orders_url: str) -> str:
             except Exception:
                 pass
 
-        return _extract_tracking_from_detail_page(detail_page)
+        return _extract_order_details_from_detail_page(detail_page)
     except Exception:
-        return ""
+        return "", ""
     finally:
         if opened_new_page:
             detail_page.close()
@@ -495,10 +510,12 @@ def _fetch_tracking_by_click(page: Page, order_id: str, orders_url: str) -> str:
                 pass
 
 
-def _extract_tracking_from_detail_page(page: Page) -> str:
-    tracking_number = _parse_tracking_number(_safe_body_text(page))
+def _extract_order_details_from_detail_page(page: Page) -> tuple[str, str]:
+    detail_text = _safe_body_text(page)
+    payment_method = _parse_payment_method(detail_text)
+    tracking_number = _parse_tracking_number(detail_text)
     if tracking_number:
-        return tracking_number
+        return tracking_number, payment_method
 
     pages_before = set(page.context.pages)
     _click_package_collected(page)
@@ -510,13 +527,13 @@ def _extract_tracking_from_detail_page(page: Page) -> str:
         try:
             tracking_page.wait_for_load_state("domcontentloaded", timeout=90_000)
             tracking_page.wait_for_timeout(1_500)
-            return _parse_tracking_number(_safe_body_text(tracking_page))
+            return _parse_tracking_number(_safe_body_text(tracking_page)), payment_method
         except Exception:
-            return ""
+            return "", payment_method
         finally:
             tracking_page.close()
 
-    return _parse_tracking_number(_safe_body_text(page))
+    return _parse_tracking_number(_safe_body_text(page)), payment_method
 
 
 def _click_order_details(page: Page, order_id: str) -> bool:
@@ -723,6 +740,7 @@ def _parse_order_block(text: str, settings: Settings) -> Order | None:
         responsible=settings.responsible_default,
         delivery_status=_parse_status(text),
         tracking_number=_parse_tracking_number(text),
+        payment_method=_parse_payment_method(text),
     )
 
 
@@ -852,6 +870,44 @@ def _parse_tracking_number(text: str) -> str:
             if number_match:
                 return number_match.group(0)
     return ""
+
+
+def _parse_payment_method(text: str) -> str:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    for index, line in enumerate(lines):
+        label_match = PAYMENT_METHOD_LABEL_RE.search(line)
+        if not label_match:
+            continue
+
+        value = _clean_payment_method(line[label_match.end() :])
+        if value:
+            return value
+
+        for nearby in lines[index + 1 : index + 4]:
+            value = _clean_payment_method(nearby)
+            if value:
+                return value
+    return ""
+
+
+def _clean_payment_method(value: str) -> str:
+    value = re.sub(r"^[\s:：-]+", "", value or "").strip()
+    if not value:
+        return ""
+
+    value = re.split(
+        r"\s{2,}|(?:Payment\s*time|Order\s*time|Paid\s*on|Amount|Total|Copy)\s*:?",
+        value,
+        maxsplit=1,
+        flags=re.I,
+    )[0].strip(" :：-")
+    if not value:
+        return ""
+
+    if PAYMENT_METHOD_LABEL_RE.fullmatch(value) or re.fullmatch(r"(copy|details?|total|amount)", value, re.I):
+        return ""
+    return value[:80]
 
 
 def _parse_money(text: str) -> tuple[Decimal | None, str]:

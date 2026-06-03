@@ -1,33 +1,30 @@
 # AliExpress Orders Sync
 
-Sincroniza pedidos da AliExpress para uma planilha Excel `.xlsx`, criando o arquivo quando ele não existe e atualizando pedidos existentes pelo número do pedido.
+Sincroniza pedidos da AliExpress para uma planilha Excel `.xlsx` fixa, usando o número do pedido como chave para evitar duplicidade.
 
-## O que este projeto faz
+O projeto foi pensado para usar várias contas AliExpress compartilhando a mesma planilha. Antes de rodar, ele pergunta qual conta será usada; a conta escolhida define a pasta de sessão do navegador e o texto da coluna **Responsável**.
 
-- Abre a página **Meus Pedidos** da AliExpress usando Playwright.
-- Usa uma sessão persistente do navegador para evitar login repetido.
-- Lê pedidos disponíveis na página e normaliza número do pedido, data, quantidade, valor, moeda e status.
-- Cria ou atualiza uma planilha Excel com `openpyxl`.
-- Evita duplicidade usando o **Número do Pedido** como chave.
-- Atualiza o campo **Status de Entrega** quando ele mudar.
-- Cria a coluna **Tipo** com validação de dados do Excel, usando lista suspensa com `Entrada` e `Saída`.
+## O Que Faz
 
-## Estrutura
-
-```text
-aliexpress_orders_sync/
-  config.py       # Carrega configurações do .env
-  excel_sync.py   # Criação/atualização da planilha com openpyxl
-  main.py         # CLI: login, sync e watch
-  models.py       # Modelo normalizado de pedido
-  scraper.py      # Scraping com Playwright
-tests/
-  test_excel_sync.py
-```
+- Abre a página **Meus Pedidos** da AliExpress.
+- Usa uma sessão persistente do Chrome/Edge para manter cookies e login por conta.
+- Carrega pedidos antigos clicando em **View orders** até acabar o histórico disponível.
+- Entra em **Order details** de cada pedido.
+- Extrai o campo **Payment method** e salva na coluna **Forma de Pagamento**.
+- Abre a área de rastreio, como **Package collected by carrier** ou **View tracking info**.
+- Extrai o **Tracking number** e salva na coluna **Nº Rastreio**.
+- Cria ou atualiza a planilha Excel com `openpyxl`.
+- Atualiza pedidos existentes sem duplicar linhas.
+- Remove pedidos anteriores a **01/01/2026**.
+- Ordena a planilha por **Data do Pedido**, com os pedidos mais recentes em cima.
+- Mistura pedidos de contas diferentes pela data, em vez de separar por responsável.
 
 ## Instalação
 
+No PowerShell:
+
 ```powershell
+cd C:\Users\User\Desktop\150
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -35,57 +32,85 @@ python -m playwright install chromium
 Copy-Item .env.example .env
 ```
 
-Edite o arquivo `.env`:
+## Configuração
+
+O arquivo principal de configuração é:
+
+```text
+.env
+```
+
+Exemplo:
 
 ```env
 EXCEL_PATH=./data/pedidos_aliexpress.xlsx
 RESPONSAVEL_PADRAO=Seu Nome
+ACCOUNT_ID=auto
+ASK_ACCOUNT=true
+ACCOUNT_PROFILES_PATH=./contas.txt
 CHECK_INTERVAL_MINUTES=60
-ALIEXPRESS_SESSION_DIR=./browser-session
+ALIEXPRESS_SESSION_DIR=./chrome-session
 ALIEXPRESS_ORDERS_URL=https://www.aliexpress.com/p/order/index.html
 HEADLESS=false
-DEFAULT_TIPO=Saída
+DEFAULT_TIPO=Entrada
 BROWSER_CHANNEL=chrome
 CDP_URL=http://127.0.0.1:9222
 BROWSER_EXECUTABLE=
 ```
 
-## Como usar
+`EXCEL_PATH` é a planilha fixa. Todas as contas gravam no mesmo arquivo quando esse caminho é igual.
 
-### Modo recomendado quando há CAPTCHA
+## Contas
 
-Abra uma janela normal do Chrome/Edge com porta local:
+As contas ficam no arquivo:
+
+```text
+contas.txt
+```
+
+Formato:
+
+```text
+id|email|responsavel_na_planilha|pasta_de_sessao
+```
+
+Exemplo atual:
+
+```text
+conta1|riquelmesenna577@gmail.com|riquelme|./chrome-session-conta-1
+conta2|riquelmestayler@gmail.com|neto|./chrome-session-conta-2
+```
+
+Ao rodar o programa, ele mostra um menu:
+
+```text
+1. riquelmesenna577@gmail.com -> Responsável: riquelme
+2. riquelmestayler@gmail.com -> Responsável: neto
+```
+
+Se escolher a conta 1, a coluna **Responsável** fica `riquelme`.
+
+Se escolher a conta 2, fica `neto`.
+
+Cada conta precisa ter uma pasta de sessão diferente. Não apague essas pastas, porque elas guardam cookies e login.
+
+Para adicionar uma nova conta, adicione uma linha:
+
+```text
+conta3|emaildeterceiraconta@gmail.com|nome_na_planilha|./chrome-session-conta-3
+```
+
+## Como Usar
+
+Primeiro abra o navegador da conta:
 
 ```powershell
 python -m aliexpress_orders_sync.main open-browser
 ```
 
-Faça login na AliExpress nessa janela, resolva o CAPTCHA manualmente e deixe a janela aberta.
-Na tela **Meus Pedidos**, o sincronizador clica automaticamente em **View orders** para carregar pedidos antigos até o botão parar de aparecer.
+Escolha a conta no menu, faça login na AliExpress e deixe a janela aberta.
 
 Depois sincronize:
-
-```powershell
-python -m aliexpress_orders_sync.main sync
-```
-
-Para monitorar periodicamente, mantenha essa janela aberta e rode:
-
-```powershell
-python -m aliexpress_orders_sync.main watch
-```
-
-### Modo Playwright tradicional
-
-Se a AliExpress não bloquear o CAPTCHA, também é possível salvar a sessão diretamente:
-
-```powershell
-python -m aliexpress_orders_sync.main login
-```
-
-Faça login na janela aberta, confira que a página **Meus Pedidos** carregou e pressione Enter no terminal.
-
-Para sincronizar uma vez:
 
 ```powershell
 python -m aliexpress_orders_sync.main sync
@@ -97,38 +122,91 @@ Para monitorar periodicamente:
 python -m aliexpress_orders_sync.main watch
 ```
 
-O intervalo é controlado por `CHECK_INTERVAL_MINUTES`.
+O intervalo do `watch` é definido por:
 
-Se o CAPTCHA da AliExpress falhar no Chromium do Playwright, mantenha `BROWSER_CHANNEL=chrome` para usar o Google Chrome instalado no Windows. Se você não tiver o Chrome instalado, remova essa linha ou deixe `BROWSER_CHANNEL=` e rode `python -m playwright install chromium`.
+```env
+CHECK_INTERVAL_MINUTES=60
+```
 
-## Colunas geradas
+## Colunas Da Planilha
 
 1. Data do Pedido
-2. Categoria
+2. Descrição do Item
 3. Quantidade
-4. Tipo
-5. Valor Total
-6. Valor Unitário
-7. Responsável
-8. Status de Entrega
-9. Número do Pedido
-10. Moeda
+4. Valor Total
+5. Valor Unitário
+6. Responsável
+7. Status de Entrega
+8. Número do Pedido
+9. Nº Rastreio
+10. Forma de Pagamento
 
-A coluna **Número do Pedido** é mantida na planilha para garantir atualização sem duplicar linhas.
+Observações:
+
+- **Valor Unitário** é calculado por fórmula: `Valor Total / Quantidade`.
+- **Número do Pedido** é a chave usada para atualizar sem duplicar.
+- **Nº Rastreio** vem do campo `Tracking number` dentro de **Order details**.
+- **Forma de Pagamento** vem do campo `Payment method` dentro de **Order details**.
+- Pedidos anteriores a **01/01/2026** são removidos.
+
+## Fluxo Dos Detalhes
+
+Para cada pedido, o scraper tenta:
+
+1. Clicar em **Order details**.
+2. Clicar no bloco abaixo de **Estimated delivery date**.
+3. Também tenta textos como **Package collected by carrier** e **View tracking info**.
+4. Extrair o valor de **Payment method**.
+5. Extrair o valor de **Tracking number**.
+6. Fechar a página/aba de detalhes quando ela for aberta separadamente.
+
+Durante a execução, o terminal mostra:
+
+```text
+Buscando detalhes 1/50 - pedido ...
+  Rastreio encontrado: ...
+  Pagamento encontrado: ...
+```
+
+ou:
+
+```text
+  Rastreio não encontrado.
+  Pagamento não encontrado.
+```
+
+## Sessão E Login
+
+O projeto não salva senha e não faz login automático. Ele usa o Chrome/Edge com uma pasta de perfil por conta.
+
+Exemplo:
+
+```text
+./chrome-session-conta-1
+./chrome-session-conta-2
+```
+
+Essas pastas guardam cookies e login, parecido com um Chrome normal. Mesmo assim, a AliExpress pode expirar a sessão e pedir autenticação novamente.
+
+Para reduzir relogin:
+
+- use sempre a mesma pasta de sessão para a mesma conta;
+- não apague as pastas `chrome-session-*`;
+- deixe a janela aberta quando for rodar `sync`;
+- feche a janela antes de trocar para outra conta, porque todas usam a porta local `9222`.
 
 ## Testes
 
 ```powershell
-pip install pytest
-pytest
+python -m pytest
 ```
 
-## Limitações importantes
+## Limitações
 
-A AliExpress pode alterar HTML, classes e fluxos de autenticação, além de aplicar proteções anti-bot. Por isso, o scraper usa seletores prováveis e extração textual por regex, mas pode precisar de ajuste depois de verificar a página real da sua conta.
+A AliExpress pode mudar HTML, fluxo de login, CAPTCHA ou layout dos pedidos. Se isso acontecer, pode ser necessário ajustar os seletores do scraper.
 
-Alternativas viáveis quando o scraping for instável:
+Alternativas caso o scraping fique instável:
 
-- usar API oficial ou endpoint autorizado, se disponível para sua conta;
-- criar uma extensão de navegador que leia os dados diretamente da página já autenticada;
-- importar manualmente um arquivo/exportação da plataforma e usar apenas o módulo Excel deste projeto para sincronização.
+- usar API oficial ou endpoint autorizado, se disponível;
+- criar uma extensão de navegador para ler a página autenticada;
+- importar dados manualmente e usar apenas o módulo Excel para consolidar a planilha.
