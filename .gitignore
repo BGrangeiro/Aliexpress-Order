@@ -22,6 +22,11 @@ env/
 .pytest_cache/
 .coverage
 
+# Build do executavel
+build/
+dist/
+*.spec
+
 # VS Code
 .vscode/
 

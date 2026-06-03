@@ -200,8 +200,10 @@ def _write_order(sheet, row: int, order: Order) -> None:
     sheet.cell(row=row, column=RESPONSIBLE_COLUMN, value=order.responsible)
     sheet.cell(row=row, column=STATUS_COLUMN, value=_normalize_status(order.delivery_status))
     sheet.cell(row=row, column=ORDER_ID_COLUMN, value=order.order_id)
-    sheet.cell(row=row, column=TRACKING_COLUMN, value=order.tracking_number or "")
-    sheet.cell(row=row, column=PAYMENT_METHOD_COLUMN, value=order.payment_method or "")
+    existing_tracking = sheet.cell(row=row, column=TRACKING_COLUMN).value or ""
+    existing_payment = sheet.cell(row=row, column=PAYMENT_METHOD_COLUMN).value or ""
+    sheet.cell(row=row, column=TRACKING_COLUMN, value=order.tracking_number or existing_tracking)
+    sheet.cell(row=row, column=PAYMENT_METHOD_COLUMN, value=order.payment_method or existing_payment)
 
     sheet.cell(row=row, column=1).number_format = "DD/MM/YYYY"
     sheet.cell(row=row, column=TOTAL_COLUMN).number_format = _money_format(order.currency)

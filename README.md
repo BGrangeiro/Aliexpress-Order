@@ -15,6 +15,7 @@ O projeto foi pensado para usar várias contas AliExpress compartilhando a mesma
 - Extrai o **Tracking number** e salva na coluna **Nº Rastreio**.
 - Cria ou atualiza a planilha Excel com `openpyxl`.
 - Atualiza pedidos existentes sem duplicar linhas.
+- Pode ficar monitorando automaticamente em segundo plano enquanto o app estiver aberto, sem abrir item por item.
 - Remove pedidos anteriores a **01/01/2026**.
 - Ordena a planilha por **Data do Pedido**, com os pedidos mais recentes em cima.
 - Mistura pedidos de contas diferentes pela data, em vez de separar por responsável.
@@ -101,6 +102,63 @@ conta3|emaildeterceiraconta@gmail.com|nome_na_planilha|./chrome-session-conta-3
 ```
 
 ## Como Usar
+
+### Aplicativo `.exe`
+
+O jeito recomendado para entregar ao cliente e usar sem VS Code e sem terminal e abrir:
+
+```text
+dist\AliExpressPedidos\AliExpressPedidos.exe
+```
+
+Na janela do app:
+
+1. Escolha a conta em **Conta logada**.
+2. Clique no botão **?** para ver as contas cadastradas, o responsável e a pasta de sessão.
+3. Clique em **Abrir navegador / login** se precisar autenticar a conta na AliExpress.
+4. Deixe a janela do navegador aberta.
+5. Clique em **Verificar pedidos** para rodar uma vez, ou em **Iniciar monitoramento** para deixar automático.
+
+O botão **Verificar pedidos** executa a sincronização completa do comando `sync`: carrega os pedidos, entra em **Order details**, busca rastreio, forma de pagamento e atualiza a planilha fixa configurada em `EXCEL_PATH`.
+
+O botão **Iniciar monitoramento** faz uma verificação leve automaticamente no intervalo definido por:
+
+```env
+CHECK_INTERVAL_MINUTES=60
+```
+
+Esse monitoramento leve recarrega **My Orders**, lê apenas os pedidos visíveis da lista e atualiza pedido novo ou status básico. Ele não entra em **Order details** e não pesquisa produto por produto. Se precisar completar rastreio e forma de pagamento, use **Verificar pedidos**.
+
+Enquanto o monitoramento estiver ativo, o app mostra:
+
+- conta monitorada;
+- última verificação;
+- próxima verificação;
+- logs do que foi lido, criado ou atualizado.
+
+Para trocar de conta:
+
+1. Clique em **Parar monitoramento**.
+2. Feche o navegador da conta atual.
+3. Escolha outra conta no app.
+4. Clique em **Abrir navegador / login** se precisar.
+5. Clique em **Iniciar monitoramento** novamente.
+
+Para gerar o `.exe` novamente depois de alterar o código:
+
+```powershell
+.\build_exe.ps1
+```
+
+O cliente deve receber a pasta inteira:
+
+```text
+dist\AliExpressPedidos
+```
+
+Não envie apenas o `.exe` sozinho, porque a pasta também leva `.env`, `contas.txt`, dependências internas e a pasta `data`.
+
+### Terminal
 
 Primeiro abra o navegador da conta:
 

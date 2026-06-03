@@ -127,6 +127,16 @@ def login(settings: Settings) -> None:
 def fetch_orders(settings: Settings) -> list[Order]:
     """Fetch and normalize all loaded AliExpress orders."""
 
+    return _fetch_orders(settings, include_order_details=True)
+
+
+def fetch_orders_summary(settings: Settings) -> list[Order]:
+    """Fetch only the visible My Orders cards without opening Order details."""
+
+    return _fetch_orders(settings, include_order_details=False)
+
+
+def _fetch_orders(settings: Settings, include_order_details: bool) -> list[Order]:
     with sync_playwright() as playwright:
         if settings.cdp_url:
             browser = _connect_over_cdp(playwright, settings)
@@ -134,11 +144,13 @@ def fetch_orders(settings: Settings) -> list[Order]:
             page = _page_for_orders(context)
             page.goto(settings.orders_url, wait_until="domcontentloaded", timeout=90_000)
             page.wait_for_timeout(5_000)
-            _load_all_orders(page)
+            if include_order_details:
+                _load_all_orders(page)
             account_id = _resolve_account_id(page, settings)
             orders = _extract_orders_from_page(page, settings)
             orders = [replace(order, responsible=account_id) for order in orders]
-            orders = _enrich_orders_with_order_details(page, orders, settings.orders_url)
+            if include_order_details:
+                orders = _enrich_orders_with_order_details(page, orders, settings.orders_url)
             # Do not close a CDP-connected browser: keeping the real profile open
             # helps Chrome persist cookies just like a normal browsing session.
             return orders
@@ -147,11 +159,13 @@ def fetch_orders(settings: Settings) -> list[Order]:
         page = context.new_page()
         page.goto(settings.orders_url, wait_until="domcontentloaded", timeout=90_000)
         page.wait_for_timeout(5_000)
-        _load_all_orders(page)
+        if include_order_details:
+            _load_all_orders(page)
         account_id = _resolve_account_id(page, settings)
         orders = _extract_orders_from_page(page, settings)
         orders = [replace(order, responsible=account_id) for order in orders]
-        orders = _enrich_orders_with_order_details(page, orders, settings.orders_url)
+        if include_order_details:
+            orders = _enrich_orders_with_order_details(page, orders, settings.orders_url)
         context.close()
         return orders
 

@@ -103,6 +103,40 @@ def test_sync_updates_same_fixed_workbook_with_account_value(tmp_path):
     assert sheet["G2"].value == "Completed"
 
 
+def test_lightweight_update_preserves_existing_detail_columns(tmp_path):
+    excel_path = tmp_path / "pedidos.xlsx"
+    complete_order = Order(
+        order_id="1234567893",
+        order_date=date(2026, 6, 2),
+        item_description="Produto",
+        quantity=1,
+        total_value=Decimal("10.00"),
+        currency="BRL",
+        responsible="Conta A",
+        delivery_status="Awaiting delivery",
+        tracking_number="LP123456789CN",
+        payment_method="Pix",
+    )
+    lightweight_order = Order(
+        **{
+            **complete_order.__dict__,
+            "delivery_status": "Completed",
+            "tracking_number": "",
+            "payment_method": "",
+        }
+    )
+
+    sync_orders_to_excel([complete_order], excel_path)
+    sync_orders_to_excel([lightweight_order], excel_path)
+
+    workbook = load_workbook(excel_path, data_only=False)
+    sheet = workbook.active
+
+    assert sheet["G2"].value == "Completed"
+    assert sheet["I2"].value == "LP123456789CN"
+    assert sheet["J2"].value == "Pix"
+
+
 def test_sync_sorts_by_date_and_removes_orders_before_2026(tmp_path):
     excel_path = tmp_path / "pedidos.xlsx"
     old_order = Order(
