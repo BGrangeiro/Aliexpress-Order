@@ -1,0 +1,31 @@
+# Variáveis de ambiente
+.env
+
+# Sessões do navegador
+chrome-session/
+browser-session/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ambientes virtuais
+venv/
+.venv/
+env/
+
+# Arquivos de teste/cache
+.pytest_cache/
+.coverage
+
+# VS Code
+.vscode/
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
+
+# Dados temporários
+*.log
