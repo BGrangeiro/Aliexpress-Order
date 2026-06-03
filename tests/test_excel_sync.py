@@ -18,7 +18,7 @@ def test_sync_creates_updates_and_styles_workbook(tmp_path):
         quantity=2,
         total_value=Decimal("20.00"),
         currency="USD",
-        responsible="Maria",
+        responsible="Conta A",
         delivery_status="Cancelado",
         tracking_number="LP123456789CN",
     )
@@ -45,6 +45,7 @@ def test_sync_creates_updates_and_styles_workbook(tmp_path):
     assert sheet["A2"].alignment.horizontal == "center"
     assert sheet["C2"].alignment.horizontal == "center"
     assert sheet["E2"].value == "=D2/C2"
+    assert sheet["F2"].value == "Conta A"
     assert sheet["G2"].value == "Entregue"
     assert sheet["H2"].value == "1234567890"
     assert sheet["I2"].value == "LP123456789CN"
@@ -59,7 +60,7 @@ def test_sync_normalizes_canceled_status_and_empty_description(tmp_path):
         quantity=1,
         total_value=Decimal("10.00"),
         currency="BRL",
-        responsible="Maria",
+        responsible="Conta B",
         delivery_status="Cancelado",
         tracking_number="",
     )
@@ -69,4 +70,31 @@ def test_sync_normalizes_canceled_status_and_empty_description(tmp_path):
     sheet = workbook.active
 
     assert sheet["B2"].value == "Não identificado"
+    assert sheet["F2"].value == "Conta B"
     assert sheet["G2"].value == "Canceled"
+
+
+def test_sync_updates_same_fixed_workbook_with_account_value(tmp_path):
+    excel_path = tmp_path / "pedidos.xlsx"
+    first = Order(
+        order_id="1234567892",
+        order_date=date(2026, 6, 2),
+        item_description="Produto",
+        quantity=1,
+        total_value=Decimal("10.00"),
+        currency="BRL",
+        responsible="Conta A",
+        delivery_status="Awaiting delivery",
+        tracking_number="",
+    )
+    second = Order(**{**first.__dict__, "delivery_status": "Completed"})
+
+    sync_orders_to_excel([first], excel_path)
+    sync_orders_to_excel([second], excel_path)
+
+    workbook = load_workbook(excel_path, data_only=False)
+    sheet = workbook.active
+
+    assert sheet.max_row == 2
+    assert sheet["F2"].value == "Conta A"
+    assert sheet["G2"].value == "Completed"

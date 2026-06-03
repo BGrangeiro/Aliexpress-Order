@@ -131,9 +131,12 @@ def fetch_orders(settings: Settings) -> list[Order]:
             page.goto(settings.orders_url, wait_until="domcontentloaded", timeout=90_000)
             page.wait_for_timeout(5_000)
             _load_all_orders(page)
+            account_id = _resolve_account_id(page, settings)
             orders = _extract_orders_from_page(page, settings)
+            orders = [replace(order, responsible=account_id) for order in orders]
             orders = _enrich_orders_with_tracking(page, orders, settings.orders_url)
-            browser.close()
+            # Do not close a CDP-connected browser: keeping the real profile open
+            # helps Chrome persist cookies just like a normal browsing session.
             return orders
 
         context = _new_context(playwright, settings)
@@ -141,7 +144,9 @@ def fetch_orders(settings: Settings) -> list[Order]:
         page.goto(settings.orders_url, wait_until="domcontentloaded", timeout=90_000)
         page.wait_for_timeout(5_000)
         _load_all_orders(page)
+        account_id = _resolve_account_id(page, settings)
         orders = _extract_orders_from_page(page, settings)
+        orders = [replace(order, responsible=account_id) for order in orders]
         orders = _enrich_orders_with_tracking(page, orders, settings.orders_url)
         context.close()
         return orders
@@ -294,6 +299,100 @@ def _extract_orders_from_page(page: Page, settings: Settings) -> list[Order]:
         if order:
             orders_by_id[order.order_id] = order
     return list(orders_by_id.values())
+
+
+def _resolve_account_id(page: Page, settings: Settings) -> str:
+    configured = str(settings.account_id or "").strip()
+    if configured and configured.lower() != "auto":
+        print(f"Conta configurada: {configured}")
+        return configured
+
+    detected = _detect_account_id(page)
+    if detected:
+        print(f"Conta detectada: {detected}")
+        return detected
+
+    fallback = settings.responsible_default or "Conta não identificada"
+    print(f"Conta não detectada automaticamente. Usando fallback: {fallback}")
+    return fallback
+
+
+def _detect_account_id(page: Page) -> str:
+    try:
+        value = page.evaluate(
+            """
+            () => {
+              const clean = (value) => String(value || '')
+                .replace(/\\s+/g, ' ')
+                .replace(/^hi[,!]?\\s*/i, '')
+                .replace(/^ol[aá][,!]?\\s*/i, '')
+                .trim();
+
+              const emailRe = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/i;
+              const bad = /^(account|minha conta|meus pedidos|orders|order details|aliexpress|cart|carrinho|copy)$/i;
+              const candidates = [];
+
+              const bodyText = document.body ? document.body.innerText || '' : '';
+              const email = bodyText.match(emailRe);
+              if (email) candidates.push(email[0]);
+
+              const selectorHints = [
+                '[class*="account"]',
+                '[class*="user"]',
+                '[class*="member"]',
+                '[class*="profile"]',
+                '[data-role*="account"]',
+                '[data-spm*="account"]',
+                'a[href*="account"]',
+                'a[href*="login"]'
+              ];
+
+              for (const selector of selectorHints) {
+                for (const element of Array.from(document.querySelectorAll(selector))) {
+                  const text = clean(element.innerText || element.textContent || '');
+                  if (text && text.length >= 3 && text.length <= 80 && !bad.test(text)) {
+                    candidates.push(text);
+                  }
+                }
+              }
+
+              for (const script of Array.from(document.scripts || [])) {
+                const text = script.textContent || '';
+                const scriptEmail = text.match(emailRe);
+                if (scriptEmail) candidates.push(scriptEmail[0]);
+
+                const nameMatch = text.match(/"(?:firstName|displayName|nick|nickname|loginId|memberName|userName)"\\s*:\\s*"([^"]{3,80})"/i);
+                if (nameMatch) candidates.push(nameMatch[1]);
+              }
+
+              try {
+                for (let index = 0; index < localStorage.length; index += 1) {
+                  const key = localStorage.key(index);
+                  const stored = localStorage.getItem(key) || '';
+                  const storedEmail = stored.match(emailRe);
+                  if (storedEmail) candidates.push(storedEmail[0]);
+
+                  const storedName = stored.match(/"(?:firstName|displayName|nick|nickname|loginId|memberName|userName)"\\s*:\\s*"([^"]{3,80})"/i);
+                  if (storedName) candidates.push(storedName[1]);
+                }
+              } catch (error) {}
+
+              const normalized = [];
+              for (const candidate of candidates.map(clean)) {
+                if (!candidate || bad.test(candidate)) continue;
+                if (/^\\d+$/.test(candidate)) continue;
+                if (candidate.length < 3 || candidate.length > 80) continue;
+                if (!normalized.includes(candidate)) normalized.push(candidate);
+              }
+
+              const emailCandidate = normalized.find((candidate) => emailRe.test(candidate));
+              return emailCandidate || normalized[0] || '';
+            }
+            """
+        )
+        return str(value or "").strip()
+    except Exception:
+        return ""
 
 
 def _enrich_orders_with_tracking(page: Page, orders: list[Order], orders_url: str) -> list[Order]:

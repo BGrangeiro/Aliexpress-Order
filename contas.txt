@@ -1,0 +1,11 @@
+# Arquivo simples de contas AliExpress.
+# Formato:
+# id|email|responsavel_na_planilha|pasta_de_sessao
+#
+# O responsavel_na_planilha é o texto que vai aparecer na coluna "Responsável".
+# A pasta_de_sessao separa cookies/login de cada conta.
+# Não apague as pastas de sessão, porque elas guardam o login/cookies.
+# Exemplo de adição de conta: conta3|emaildeterceiraconta@gmail.com|nome_na_planilha|./chrome-session-conta-3
+
+conta1|riquelmesenna577@gmail.com|riquelme|./chrome-session-conta-1
+conta2|riquelmestayler@gmail.com|neto|./chrome-session-conta-2

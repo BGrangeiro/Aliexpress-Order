@@ -10,6 +10,7 @@ def _settings(tmp_path) -> Settings:
     return Settings(
         excel_path=tmp_path / "pedidos.xlsx",
         responsible_default="Comprador",
+        account_id="auto",
         check_interval_minutes=60,
         session_dir=tmp_path / "session",
         orders_url="https://www.aliexpress.com/p/order/index.html",

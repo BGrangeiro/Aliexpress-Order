@@ -3,7 +3,9 @@
 
 # Sessões do navegador
 chrome-session/
+chrome-session-*/
 browser-session/
+browser-session-*/
 
 # Python
 __pycache__/

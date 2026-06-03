@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import time
 
+from .accounts import choose_account
 from .config import load_settings
 from .excel_sync import sync_orders_to_excel
 from .scraper import BrowserConnectionError, ensure_browser_is_open, fetch_orders, login, open_browser
@@ -18,7 +19,7 @@ def main() -> None:
     parser.add_argument("--env", default=".env", help="Caminho do arquivo .env.")
     args = parser.parse_args()
 
-    settings = load_settings(args.env)
+    settings = choose_account(load_settings(args.env))
 
     if args.command == "open-browser":
         open_browser(settings)
@@ -40,6 +41,12 @@ def main() -> None:
 
 
 def _sync_once(settings) -> None:
+    print(f"Planilha fixa: {settings.excel_path.resolve()}")
+    if settings.account_id.lower() == "auto":
+        print("Conta: detecção automática ativada.")
+    else:
+        print(f"Conta configurada: {settings.account_id}")
+
     try:
         orders = fetch_orders(settings)
     except BrowserConnectionError:

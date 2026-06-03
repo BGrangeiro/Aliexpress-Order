@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 class Settings:
     excel_path: Path
     responsible_default: str
+    account_id: str
     check_interval_minutes: int
     session_dir: Path
     orders_url: str
@@ -19,6 +20,8 @@ class Settings:
     browser_channel: str | None
     cdp_url: str | None
     browser_executable: str | None
+    ask_account: bool = True
+    account_profiles_path: Path = Path("./contas.txt")
 
 
 def _bool_from_env(value: str | None, default: bool) -> bool:
@@ -46,6 +49,7 @@ def load_settings(env_file: str | os.PathLike[str] | None = None) -> Settings:
     return Settings(
         excel_path=excel_path,
         responsible_default=os.getenv("RESPONSAVEL_PADRAO", "Nao informado").strip(),
+        account_id=os.getenv("ACCOUNT_ID", "auto").strip() or "auto",
         check_interval_minutes=interval,
         session_dir=session_dir,
         orders_url=os.getenv(
@@ -57,6 +61,8 @@ def load_settings(env_file: str | os.PathLike[str] | None = None) -> Settings:
         browser_channel=os.getenv("BROWSER_CHANNEL", "chrome").strip() or None,
         cdp_url=os.getenv("CDP_URL", "").strip() or None,
         browser_executable=os.getenv("BROWSER_EXECUTABLE", "").strip() or None,
+        ask_account=_bool_from_env(os.getenv("ASK_ACCOUNT"), True),
+        account_profiles_path=Path(os.getenv("ACCOUNT_PROFILES_PATH", "./contas.txt")).expanduser(),
     )
 
 
