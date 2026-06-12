@@ -13,8 +13,17 @@ from playwright.sync_api import BrowserContext, Page, sync_playwright
 from .config import Settings
 from .models import Order
 
+ALIEXPRESS_HOME_URL = "https://www.aliexpress.com/"
+MONITOR_TAB_HASH = "orders-sync-monitor"
+
 ORDER_ID_RE = re.compile(
-    r"(?:Order\s*(?:ID|No\.?|number)?|Pedido\s*(?:numero|n[uú]mero|N[oº])?)\D*(\d{8,})",
+    r"(?:"
+    r"Order\s*(?:ID|No\.?|number)?|"
+    r"Ref\.?\s*(?:Number|No\.?)|"
+    r"(?:N[oº]|N[uú]mero)\s*(?:do\s*)?pedido|"
+    r"ID\s*do\s*pedido|"
+    r"Pedido\s*(?:ID|numero|n[uú]mero|N[oº])?"
+    r")\D*(\d{8,})",
     re.I,
 )
 TOTAL_MONEY_RE = re.compile(
@@ -24,15 +33,11 @@ TOTAL_MONEY_RE = re.compile(
 )
 MONEY_RE = re.compile(r"(R\$|US\$|\$|BRL|USD)\s*([\d.,]+)|([\d.,]+)\s*(BRL|USD)", re.I)
 TRACKING_NUMBER_RE = re.compile(
-    r"(?:Tracking\s*number|N[uú]mero\s*de\s*rastreio|C[oó]digo\s*de\s*rastreio)\s*:?\s*[\r\n ]+([A-Z0-9][A-Z0-9\-]{6,})",
-    re.I,
-)
-TRACKING_NUMBER_RE = re.compile(
-    r"(?:Tracking\s*(?:number|no\.?)|Numero\s*de\s*rastreio|Código\s*de\s*rastreio|Codigo\s*de\s*rastreio)\s*:?\s*([A-Z0-9][A-Z0-9\-]{6,})",
+    r"(?:Tracking\s*(?:number|no\.?)|N[uú]mero\s*de\s*rastre(?:io|amento)|Numero\s*de\s*rastre(?:io|amento)|C[oó]digo\s*de\s*rastre(?:io|amento)|Codigo\s*de\s*rastre(?:io|amento))\s*:?\s*([A-Z0-9][A-Z0-9\-]{6,})",
     re.I,
 )
 PAYMENT_METHOD_LABEL_RE = re.compile(
-    r"(Payment\s*method|M[eé]todo\s*de\s*pagamento|Metodo\s*de\s*pagamento|Forma\s*de\s*pagamento)",
+    r"(Payment\s*method|M[eé]todo\s*de\s*pagamento|Metodo\s*de\s*pagamento|Forma\s*de\s*pagamento|Pagamento)",
     re.I,
 )
 QUANTITY_RE = re.compile(r"(?:Qty|Quantidade|Qtd)\D*(\d+)", re.I)
@@ -43,7 +48,7 @@ UNIT_PRICE_QUANTITY_RE = re.compile(
 DATE_PATTERNS = [
     re.compile(r"(\d{2})/(\d{2})/(\d{4})"),
     re.compile(r"(\d{4})-(\d{2})-(\d{2})"),
-    re.compile(r"(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})"),
+    re.compile(r"(\d{1,2})\s+([A-Za-z]{3,9})\s*,?\s+(\d{4})"),
     re.compile(r"([A-Za-z]{3,9})\s+(\d{1,2}),\s+(\d{4})"),
 ]
 
@@ -51,10 +56,13 @@ STATUS_HINTS = [
     "Entregue",
     "A caminho",
     "Aguardando envio",
+    "Aguardando entrega",
     "Despachado",
     "Enviado",
     "Cancelado",
     "Finalizado",
+    "Concluído",
+    "Concluido",
     "Awaiting shipment",
     "Awaiting delivery",
     "Shipped",
@@ -64,6 +72,9 @@ STATUS_HINTS = [
     "Cancelled",
     "In transit",
     "Completed",
+    "To pay",
+    "A pagar",
+    "Para pagar",
 ]
 
 MONTHS = {
@@ -140,14 +151,15 @@ def _fetch_orders(settings: Settings, include_order_details: bool) -> list[Order
     with sync_playwright() as playwright:
         if settings.cdp_url:
             browser = _connect_over_cdp(playwright, settings)
-            context = browser.contexts[0] if browser.contexts else browser.new_context(locale="pt-BR")
+            context = browser.contexts[0] if browser.contexts else browser.new_context()
             page = _page_for_orders(context)
-            page.goto(settings.orders_url, wait_until="domcontentloaded", timeout=90_000)
+            page.goto(_monitor_orders_url(settings.orders_url), wait_until="domcontentloaded", timeout=90_000)
             page.wait_for_timeout(5_000)
             if include_order_details:
                 _load_all_orders(page)
             account_id = _resolve_account_id(page, settings)
             orders = _extract_orders_from_page(page, settings)
+            _raise_if_orders_were_not_parsed(page, orders)
             orders = [replace(order, responsible=account_id) for order in orders]
             if include_order_details:
                 orders = _enrich_orders_with_order_details(page, orders, settings.orders_url)
@@ -157,12 +169,13 @@ def _fetch_orders(settings: Settings, include_order_details: bool) -> list[Order
 
         context = _new_context(playwright, settings)
         page = context.new_page()
-        page.goto(settings.orders_url, wait_until="domcontentloaded", timeout=90_000)
+        page.goto(_monitor_orders_url(settings.orders_url), wait_until="domcontentloaded", timeout=90_000)
         page.wait_for_timeout(5_000)
         if include_order_details:
             _load_all_orders(page)
         account_id = _resolve_account_id(page, settings)
         orders = _extract_orders_from_page(page, settings)
+        _raise_if_orders_were_not_parsed(page, orders)
         orders = [replace(order, responsible=account_id) for order in orders]
         if include_order_details:
             orders = _enrich_orders_with_order_details(page, orders, settings.orders_url)
@@ -191,6 +204,16 @@ def _connect_over_cdp(playwright, settings: Settings):
 def open_browser(settings: Settings) -> None:
     """Open regular Chrome/Edge with remote debugging for manual login."""
 
+    _open_browser_urls(settings, [settings.orders_url])
+
+
+def open_browser_workspace(settings: Settings) -> None:
+    """Open AliExpress for the user and a separate My Orders tab for monitoring."""
+
+    _open_browser_urls(settings, [_monitor_orders_url(settings.orders_url), ALIEXPRESS_HOME_URL])
+
+
+def _open_browser_urls(settings: Settings, urls: list[str]) -> None:
     executable = _find_browser_executable(settings)
     settings.session_dir.mkdir(parents=True, exist_ok=True)
     port = _port_from_cdp_url(settings.cdp_url or "http://127.0.0.1:9222")
@@ -200,7 +223,7 @@ def open_browser(settings: Settings) -> None:
         f"--user-data-dir={settings.session_dir.resolve()}",
         "--no-first-run",
         "--no-default-browser-check",
-        settings.orders_url,
+        *urls,
     ]
     subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -211,7 +234,6 @@ def _new_context(playwright, settings: Settings) -> BrowserContext:
         "user_data_dir": str(settings.session_dir),
         "headless": settings.headless,
         "viewport": {"width": 1366, "height": 900},
-        "locale": "pt-BR",
     }
     if settings.browser_channel:
         launch_options["channel"] = settings.browser_channel
@@ -220,9 +242,14 @@ def _new_context(playwright, settings: Settings) -> BrowserContext:
 
 def _page_for_orders(context: BrowserContext) -> Page:
     for page in context.pages:
-        if "aliexpress.com" in page.url:
+        if MONITOR_TAB_HASH in page.url or "/p/order/" in page.url:
             return page
     return context.new_page()
+
+
+def _monitor_orders_url(orders_url: str) -> str:
+    base_url = orders_url.split("#", 1)[0]
+    return f"{base_url}#{MONITOR_TAB_HASH}"
 
 
 def _find_browser_executable(settings: Settings) -> str:
@@ -277,7 +304,9 @@ def _click_view_orders(page: Page) -> bool:
     patterns = [
         re.compile(r"^\s*View\s+orders\s*$", re.I),
         re.compile(r"^\s*Ver\s+pedidos\s*$", re.I),
+        re.compile(r"^\s*Ver\s+mais\s+pedidos\s*$", re.I),
         re.compile(r"^\s*Mostrar\s+mais\s*$", re.I),
+        re.compile(r"^\s*Ver\s+mais\s*$", re.I),
         re.compile(r"^\s*View\s+more\s*$", re.I),
         re.compile(r"^\s*Load\s+more\s*$", re.I),
     ]
@@ -302,6 +331,17 @@ def _safe_body_text(page: Page) -> str:
         return page.locator("body").inner_text(timeout=2000)
     except Exception:
         return ""
+
+
+def _raise_if_orders_were_not_parsed(page: Page, orders: list[Order]) -> None:
+    if orders:
+        return
+    text = _safe_body_text(page)
+    if ORDER_ID_RE.search(text):
+        raise RuntimeError(
+            "A AliExpress exibiu pedidos, mas o layout não pôde ser interpretado. "
+            "Nenhum dado foi salvo; atualize o scraper antes de tentar novamente."
+        )
 
 
 def _extract_orders_from_page(page: Page, settings: Settings) -> list[Order]:
@@ -455,16 +495,17 @@ def _detail_urls_by_order_id(page: Page) -> dict[str, str]:
             """
             () => {
               const result = {};
-              const orderRe = /Order\\s*ID\\s*:?\\s*(\\d{8,})/i;
+              const orderRe = /(?:Order\\s*(?:ID|No\\.?|number)?|Ref\\.?\\s*(?:Number|No\\.?)|(?:N[oº]|N[uú]mero)\\s*(?:do\\s*)?pedido|ID\\s*do\\s*pedido|Pedido\\s*(?:ID|numero|n[uú]mero|N[oº])?)\\D*(\\d{8,})/i;
+              const detailsRe = /Order\\s+details|Details|Detalhes\\s+do\\s+pedido|Detalhes\\s+da\\s+compra/i;
               const elements = Array.from(document.querySelectorAll('div, section, li, article'));
 
               for (const element of elements) {
                 const text = (element.innerText || '').trim();
                 const match = text.match(orderRe);
-                if (!match || !/Order\\s+details/i.test(text)) continue;
+                if (!match || !detailsRe.test(text)) continue;
 
                 const links = Array.from(element.querySelectorAll('a'));
-                const detail = links.find((link) => /Order\\s+details/i.test(link.innerText || ''));
+                const detail = links.find((link) => detailsRe.test(link.innerText || ''));
                 if (detail && detail.href) result[match[1]] = detail.href;
               }
               return result;
@@ -527,9 +568,7 @@ def _fetch_order_details_by_click(page: Page, order_id: str, orders_url: str) ->
 def _extract_order_details_from_detail_page(page: Page) -> tuple[str, str]:
     detail_text = _safe_body_text(page)
     payment_method = _parse_payment_method(detail_text)
-    tracking_number = _parse_tracking_number(detail_text)
-    if tracking_number:
-        return tracking_number, payment_method
+    tracking_numbers = _parse_tracking_numbers(detail_text)
 
     pages_before = set(page.context.pages)
     _click_package_collected(page)
@@ -541,13 +580,15 @@ def _extract_order_details_from_detail_page(page: Page) -> tuple[str, str]:
         try:
             tracking_page.wait_for_load_state("domcontentloaded", timeout=90_000)
             tracking_page.wait_for_timeout(1_500)
-            return _parse_tracking_number(_safe_body_text(tracking_page)), payment_method
+            tracking_numbers.extend(_parse_tracking_numbers(_safe_body_text(tracking_page)))
+            return _join_tracking_numbers(tracking_numbers), payment_method
         except Exception:
-            return "", payment_method
+            return _join_tracking_numbers(tracking_numbers), payment_method
         finally:
             tracking_page.close()
 
-    return _parse_tracking_number(_safe_body_text(page)), payment_method
+    tracking_numbers.extend(_parse_tracking_numbers(_safe_body_text(page)))
+    return _join_tracking_numbers(tracking_numbers), payment_method
 
 
 def _click_order_details(page: Page, order_id: str) -> bool:
@@ -555,6 +596,7 @@ def _click_order_details(page: Page, order_id: str) -> bool:
         point = page.evaluate(
             """
             (orderId) => {
+              const detailsRe = /Order\\s+details|Details|Detalhes\\s+do\\s+pedido|Detalhes\\s+da\\s+compra/i;
               const elements = Array.from(document.querySelectorAll('div, section, li, article'));
               const cards = elements
                 .filter((element) => (element.innerText || '').includes(orderId))
@@ -562,7 +604,7 @@ def _click_order_details(page: Page, order_id: str) -> bool:
 
               for (const card of cards) {
                 const candidates = Array.from(card.querySelectorAll('a, button, div, span'))
-                  .filter((element) => /Order\\s+details/i.test((element.innerText || '').trim()))
+                  .filter((element) => detailsRe.test((element.innerText || '').trim()))
                   .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
 
                 for (const candidate of candidates) {
@@ -591,7 +633,7 @@ def _click_package_collected(page: Page) -> bool:
         point = page.evaluate(
             """
             () => {
-              const directPattern = /(Package\\s+collected\\s+by\\s+carrier|Collected\\s+by\\s+carrier|Shipping\\s+in\\s+\\d+\\s+packages?|View\\s+tracking\\s+info|Pacote\\s+coletado|Ver\\s+rastreamento|Informa[cç][oõ]es?\\s+de\\s+rastreamento)/i;
+              const directPattern = /(Package\\s+collected\\s+by\\s+carrier|Collected\\s+by\\s+carrier|Shipping\\s+in\\s+\\d+\\s+packages?|View\\s+tracking\\s+info|Pacote\\s+coletado|Ver\\s+rastreamento|Rastreamento|Informa[cç][oõ]es?\\s+de\\s+(?:rastreamento|envio))/i;
               const estimatedPattern = /Estimated\\s+delivery\\s+date|Data\\s+estimada\\s+de\\s+entrega/i;
               const elements = Array.from(document.querySelectorAll('a, button, div, span, section, article'));
 
@@ -648,8 +690,8 @@ def _extract_order_blocks_from_dom(page: Page) -> list[str]:
         blocks = page.evaluate(
             """
             () => {
-              const orderRe = /Order\\s*ID\\s*:?\\s*\\d{8,}/i;
-              const totalRe = /Total\\s*:?\\s*(R\\$|US\\$|\\$|BRL|USD)/i;
+              const orderRe = /(?:Order\\s*(?:ID|No\\.?|number)?|Ref\\.?\\s*(?:Number|No\\.?)|(?:N[oº]|N[uú]mero)\\s*(?:do\\s*)?pedido|ID\\s*do\\s*pedido|Pedido\\s*(?:ID|numero|n[uú]mero|N[oº])?)\\D*\\d{8,}/i;
+              const totalRe = /(?:Total|Valor\\s*total)\\s*:?\\s*(R\\$|US\\$|\\$|BRL|USD)/i;
               const qtyRe = /(R\\$|US\\$|\\$|BRL|USD)\\s*[\\d.,]+\\s*x\\s*\\d+\\b/i;
               const elements = Array.from(document.querySelectorAll('div, section, li, article'));
               const candidates = [];
@@ -688,12 +730,29 @@ def _extract_order_blocks_from_dom(page: Page) -> list[str]:
 
               const byOrderId = new Map();
               for (const text of candidates) {
-                const match = text.match(/Order\\s*ID\\s*:?\\s*(\\d{8,})/i);
+                const match = text.match(/(?:Order\\s*(?:ID|No\\.?|number)?|Ref\\.?\\s*(?:Number|No\\.?)|(?:N[oº]|N[uú]mero)\\s*(?:do\\s*)?pedido|ID\\s*do\\s*pedido|Pedido\\s*(?:ID|numero|n[uú]mero|N[oº])?)\\D*(\\d{8,})/i);
                 if (!match) continue;
                 const existing = byOrderId.get(match[1]);
                 if (!existing || text.length < existing.length) byOrderId.set(match[1], text);
               }
-              return Array.from(byOrderId.values());
+              return Array.from(byOrderId.values()).map((text) => {
+                const match = text.match(/(?:Order\\s*(?:ID|No\\.?|number)?|Ref\\.?\\s*(?:Number|No\\.?)|(?:N[oº]|N[uú]mero)\\s*(?:do\\s*)?pedido|ID\\s*do\\s*pedido|Pedido\\s*(?:ID|numero|n[uú]mero|N[oº])?)\\D*(\\d{8,})/i);
+                if (!match) return text;
+                const card = elements
+                  .filter((element) => (element.innerText || '').includes(match[1]))
+                  .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0];
+                if (!card) return text;
+                const fullLabels = Array.from(card.querySelectorAll('[title], [aria-label], img[alt]'))
+                  .flatMap((element) => [
+                    element.getAttribute('title'),
+                    element.getAttribute('aria-label'),
+                    element.getAttribute('alt'),
+                  ])
+                  .filter((value) => value && value.trim().length >= 12)
+                  .map((value) => value.trim())
+                  .filter((value, index, all) => all.indexOf(value) === index);
+                return fullLabels.length ? `${text}\\n${fullLabels.join('\\n')}` : text;
+              });
             }
             """
         )
@@ -709,6 +768,11 @@ def _extract_order_blocks_from_selectors(page: Page) -> list[str]:
         ".order-item",
         ".order-card",
         "div:has-text('Order ID')",
+        "div:has-text('Ref. Number')",
+        "div:has-text('Ref Number')",
+        "div:has-text('Número do pedido')",
+        "div:has-text('Nº do pedido')",
+        "div:has-text('ID do pedido')",
         "div:has-text('Pedido')",
     ]
 
@@ -768,24 +832,37 @@ def _parse_quantity(text: str) -> int:
 
 def _parse_item_description(text: str) -> str:
     full_name = _extract_product_name(text)
-    simplified = _simplify_product_name(full_name)
-    if simplified:
-        return simplified
+    if full_name:
+        return full_name
     return _fallback_item_description(text)
 
 
 def _extract_product_name(text: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     skip_patterns = [
-        re.compile(r"^(completed|awaiting|entregue|cancelado|canceled|cancelled|expired|expirado)\b", re.I),
+        re.compile(
+            r"^(completed|awaiting|entregue|cancelado|canceled|cancelled|expired|expirado|to\s+pay|a\s+pagar|para\s+pagar)\b",
+            re.I,
+        ),
         re.compile(r"^order\s+date\b", re.I),
+        re.compile(r"^date\s*:", re.I),
+        re.compile(r"^data\s+do\s+pedido\b", re.I),
         re.compile(r"^order\s+id\b", re.I),
+        re.compile(r"^ref\.?\s*(number|no\.?)\b", re.I),
+        re.compile(r"^(n[oº]|n[uú]mero|id)\s+do\s+pedido\b", re.I),
         re.compile(r"^pedido\b", re.I),
-        re.compile(r"^copy$", re.I),
+        re.compile(r"^(copy|copiar)$", re.I),
         re.compile(r"^order\s+details$", re.I),
+        re.compile(r"^details$", re.I),
+        re.compile(r"^detalhes\s+do\s+pedido$", re.I),
         re.compile(r"^total\s*:", re.I),
+        re.compile(r"^valor\s+total\s*:", re.I),
         re.compile(r"(R\$|US\$|\$|BRL|USD)\s*[\d.,]+", re.I),
-        re.compile(r"(coupon|returns|delivery|refund|review|cart|remove|track|confirm|received)", re.I),
+        re.compile(
+            r"(coupon|returns|delivery|refund|review|cart|remove|track|confirm|received|pay\s+now|pay\s+with|edit\s+address|shared\s+discounts|cupom|devolu[cç][aã]o|entrega|reembolso|avalia[cç][aã]o|carrinho|remover|rastrear|confirmar|recebido|pagar|pagamento|endere[cç]o)",
+            re.I,
+        ),
+        re.compile(r"^(choice|plus|brand\+?)$", re.I),
         re.compile(r"store\b", re.I),
         re.compile(r"^copy\b", re.I),
     ]
@@ -801,58 +878,7 @@ def _extract_product_name(text: str) -> str:
 
     if not candidates:
         return ""
-    return candidates[0].replace("...", "").strip()
-
-
-def _simplify_product_name(name: str) -> str:
-    if not name:
-        return ""
-
-    name = re.sub(r"\s+", " ", name).strip(" -")
-    tokens = name.split()
-    stop_words = {
-        "dual",
-        "magnetic",
-        "circuit",
-        "dynamic",
-        "drive",
-        "earphone",
-        "earphones",
-        "hifi",
-        "bass",
-        "earbud",
-        "sport",
-        "noise",
-        "cancelling",
-        "headset",
-        "fone",
-        "ouvido",
-        "conjunto",
-        "placa-mãe",
-        "placa-mae",
-        "motherboard",
-        "controle",
-        "rgb",
-        "jack",
-        "with",
-        "com",
-    }
-    spec_re = re.compile(r"^\d+(?:mm|gb|tb|mah|w|v|hz|khz|mhz|ghz|mp|cm|m)$", re.I)
-
-    simplified: list[str] = []
-    for token in tokens:
-        cleaned = token.strip(",.;:()[]{}")
-        lower = cleaned.lower()
-        if simplified and (lower in stop_words or spec_re.match(lower)):
-            break
-        simplified.append(cleaned)
-        if len(simplified) >= 5:
-            break
-
-    while len(simplified) > 3 and simplified[-1].lower() in stop_words:
-        simplified.pop()
-
-    return " ".join(simplified[:5]) or name
+    return max(candidates, key=len).replace("...", "").strip()
 
 
 def _fallback_item_description(text: str) -> str:
@@ -872,18 +898,37 @@ def _fallback_item_description(text: str) -> str:
 
 
 def _parse_tracking_number(text: str) -> str:
-    match = TRACKING_NUMBER_RE.search(text)
-    if match:
-        return match.group(1).strip()
+    numbers = _parse_tracking_numbers(text)
+    return numbers[0] if numbers else ""
+
+
+def _parse_tracking_numbers(text: str) -> list[str]:
+    numbers: list[str] = []
+    for match in TRACKING_NUMBER_RE.finditer(text):
+        number = match.group(1).strip()
+        if number not in numbers:
+            numbers.append(number)
 
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     for index, line in enumerate(lines):
-        if re.search(r"Tracking\s*(?:number|no\.?)|Numero\s*de\s*rastreio|Codigo\s*de\s*rastreio", line, re.I):
+        label_pattern = r"Tracking\s*(?:number|no\.?)|N[uú]mero\s*de\s*rastre(?:io|amento)|Numero\s*de\s*rastre(?:io|amento)|C[oó]digo\s*de\s*rastre(?:io|amento)|Codigo\s*de\s*rastre(?:io|amento)"
+        if re.search(label_pattern, line, re.I):
             nearby = " ".join(lines[index : index + 4])
-            number_match = re.search(r"\b[A-Z0-9][A-Z0-9\-]{6,}\b", nearby)
-            if number_match:
-                return number_match.group(0)
-    return ""
+            label_match = re.search(label_pattern, nearby, re.I)
+            value_text = nearby[label_match.end() :] if label_match else nearby
+            number_match = re.search(r"\b[A-Z0-9][A-Z0-9\-]{6,}\b", value_text)
+            if number_match and number_match.group(0) not in numbers:
+                numbers.append(number_match.group(0))
+    return numbers
+
+
+def _join_tracking_numbers(numbers: list[str]) -> str:
+    unique: list[str] = []
+    for number in numbers:
+        cleaned = str(number or "").strip()
+        if cleaned and cleaned not in unique:
+            unique.append(cleaned)
+    return " | ".join(unique)
 
 
 def _parse_payment_method(text: str) -> str:
@@ -911,7 +956,7 @@ def _clean_payment_method(value: str) -> str:
         return ""
 
     value = re.split(
-        r"\s{2,}|(?:Payment\s*time|Order\s*time|Paid\s*on|Amount|Total|Copy)\s*:?",
+        r"\s{2,}|(?:Payment\s*time|Order\s*time|Paid\s*on|Amount|Total|Copy|Hora\s*do\s*pagamento|Data\s*do\s*pedido|Pago\s*em|Valor|Copiar)\s*:?",
         value,
         maxsplit=1,
         flags=re.I,
@@ -921,7 +966,24 @@ def _clean_payment_method(value: str) -> str:
 
     if PAYMENT_METHOD_LABEL_RE.fullmatch(value) or re.fullmatch(r"(copy|details?|total|amount)", value, re.I):
         return ""
-    return value[:80]
+    return value[:80] if _is_valid_payment_method(value) else ""
+
+
+def _is_valid_payment_method(value: str) -> bool:
+    return bool(
+        re.search(
+            r"\b("
+            r"pix|boleto(?:\s+banc[aá]rio)?|"
+            r"credit\s*card|debit\s*card|card\s+ending|"
+            r"cart[aã]o(?:\s+de)?\s+(?:cr[eé]dito|d[eé]bito)|"
+            r"visa|mastercard|master\s*card|american\s+express|amex|elo|hipercard|"
+            r"paypal|google\s+pay|apple\s+pay|mercado\s+pago|alipay|webmoney|klarna|"
+            r"bank\s+transfer|wire\s+transfer|transfer[eê]ncia\s+banc[aá]ria"
+            r")\b",
+            value,
+            re.I,
+        )
+    )
 
 
 def _parse_money(text: str) -> tuple[Decimal | None, str]:

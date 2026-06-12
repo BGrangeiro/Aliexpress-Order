@@ -36,3 +36,6 @@ Thumbs.db
 
 # Dados temporários
 *.log
+data/*.db
+data/*.db-shm
+data/*.db-wal

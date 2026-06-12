@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import re
+from dataclasses import asdict
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -42,7 +45,11 @@ ZEBRA_FILL = PatternFill("solid", fgColor="F7FAF9")
 ORDER_DATE_CUTOFF = date(2026, 1, 1)
 
 
-def sync_orders_to_excel(orders: list[Order], excel_path: Path) -> tuple[int, int]:
+def sync_orders_to_excel(
+    orders: list[Order],
+    excel_path: Path,
+    preserve_existing_description: bool = False,
+) -> tuple[int, int]:
     """Create or update the workbook, returning (created_rows, updated_rows)."""
 
     excel_path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,20 +78,44 @@ def sync_orders_to_excel(orders: list[Order], excel_path: Path) -> tuple[int, in
 
         if order.order_id in existing_rows:
             row = existing_rows[order.order_id]
-            _write_order(sheet, row, order)
+            _write_order(sheet, row, order, preserve_existing_description)
             updated += 1
         else:
             row = sheet.max_row + 1
-            _write_order(sheet, row, order)
+            _write_order(sheet, row, order, False)
             existing_rows[order.order_id] = row
             created += 1
 
     _remove_orders_before_cutoff(sheet)
+    _sanitize_payment_methods(sheet)
     _sort_rows_by_order_date(sheet)
     _format_sheet(sheet)
     _force_formula_recalculation(workbook)
     workbook.save(excel_path)
     return created, updated
+
+
+def sync_orders_to_excel_resilient(
+    orders: list[Order],
+    excel_path: Path,
+    preserve_existing_description: bool = False,
+) -> tuple[int, int, int]:
+    """Sync orders or queue them when Excel has locked the workbook."""
+
+    pending_orders = _load_pending_orders(excel_path)
+    merged_orders = _merge_orders(pending_orders, orders)
+    try:
+        created, updated = sync_orders_to_excel(
+            merged_orders,
+            excel_path,
+            preserve_existing_description=preserve_existing_description,
+        )
+    except PermissionError:
+        _save_pending_orders(excel_path, merged_orders)
+        return 0, 0, len(merged_orders)
+
+    _remove_pending_file(excel_path)
+    return created, updated, 0
 
 
 def _create_workbook() -> Workbook:
@@ -188,12 +219,17 @@ def _coerce_date(value) -> date | None:
     return None
 
 
-def _write_order(sheet, row: int, order: Order) -> None:
+def _write_order(sheet, row: int, order: Order, preserve_existing_description: bool = False) -> None:
     total_value = _decimal_to_float(order.total_value)
     quantity = max(1, int(order.quantity or 1))
+    existing_description = str(sheet.cell(row=row, column=DESCRIPTION_COLUMN).value or "").strip()
+    incoming_description = str(order.item_description or "").strip()
+    description = incoming_description or existing_description or "Não identificado"
+    if preserve_existing_description and existing_description and existing_description != "Não identificado":
+        description = existing_description
 
     sheet.cell(row=row, column=1, value=order.order_date)
-    sheet.cell(row=row, column=DESCRIPTION_COLUMN, value=order.item_description or "Não identificado")
+    sheet.cell(row=row, column=DESCRIPTION_COLUMN, value=description)
     sheet.cell(row=row, column=QUANTITY_COLUMN, value=quantity)
     sheet.cell(row=row, column=TOTAL_COLUMN, value=total_value)
     sheet.cell(row=row, column=UNIT_VALUE_COLUMN, value=f"=D{row}/C{row}")
@@ -201,9 +237,13 @@ def _write_order(sheet, row: int, order: Order) -> None:
     sheet.cell(row=row, column=STATUS_COLUMN, value=_normalize_status(order.delivery_status))
     sheet.cell(row=row, column=ORDER_ID_COLUMN, value=order.order_id)
     existing_tracking = sheet.cell(row=row, column=TRACKING_COLUMN).value or ""
-    existing_payment = sheet.cell(row=row, column=PAYMENT_METHOD_COLUMN).value or ""
+    existing_payment = _normalize_payment_method(sheet.cell(row=row, column=PAYMENT_METHOD_COLUMN).value)
     sheet.cell(row=row, column=TRACKING_COLUMN, value=order.tracking_number or existing_tracking)
-    sheet.cell(row=row, column=PAYMENT_METHOD_COLUMN, value=order.payment_method or existing_payment)
+    sheet.cell(
+        row=row,
+        column=PAYMENT_METHOD_COLUMN,
+        value=_normalize_payment_method(order.payment_method) or existing_payment,
+    )
 
     sheet.cell(row=row, column=1).number_format = "DD/MM/YYYY"
     sheet.cell(row=row, column=TOTAL_COLUMN).number_format = _money_format(order.currency)
@@ -214,7 +254,7 @@ def _format_sheet(sheet) -> None:
     sheet.freeze_panes = "A2"
     widths = {
         "A": 18,
-        "B": 36,
+        "B": 72,
         "C": 14,
         "D": 16,
         "E": 17,
@@ -235,7 +275,7 @@ def _format_sheet(sheet) -> None:
 
 def _align_cells(sheet) -> None:
     center = Alignment(horizontal="center", vertical="center")
-    description = Alignment(horizontal="left", vertical="center")
+    description = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     for row in sheet.iter_rows(min_row=1, max_row=max(sheet.max_row, 1), min_col=1, max_col=len(HEADERS)):
         for cell in row:
@@ -264,6 +304,122 @@ def _normalize_status(status: str) -> str:
     if str(status).strip().lower() in {"cancelado", "canceled", "cancelled", "expired", "expirado"}:
         return "Canceled"
     return status
+
+
+def _sanitize_payment_methods(sheet) -> None:
+    for row in range(2, sheet.max_row + 1):
+        cell = sheet.cell(row=row, column=PAYMENT_METHOD_COLUMN)
+        cell.value = _normalize_payment_method(cell.value)
+
+
+def _normalize_payment_method(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if re.search(
+        r"\b("
+        r"pix|boleto(?:\s+banc[aá]rio)?|"
+        r"credit\s*card|debit\s*card|card\s+ending|"
+        r"cart[aã]o(?:\s+de)?\s+(?:cr[eé]dito|d[eé]bito)|"
+        r"visa|mastercard|master\s*card|american\s+express|amex|elo|hipercard|"
+        r"paypal|google\s+pay|apple\s+pay|mercado\s+pago|alipay|webmoney|klarna|"
+        r"bank\s+transfer|wire\s+transfer|transfer[eê]ncia\s+banc[aá]ria"
+        r")\b",
+        text,
+        re.I,
+    ):
+        return text[:80]
+    return ""
+
+
+def _pending_path(excel_path: Path) -> Path:
+    return excel_path.with_name(f".{excel_path.stem}.pending.json")
+
+
+def _load_pending_orders(excel_path: Path) -> list[Order]:
+    path = _pending_path(excel_path)
+    if not path.exists():
+        return []
+    try:
+        raw_orders = json.loads(path.read_text(encoding="utf-8"))
+        return [_order_from_json(item) for item in raw_orders]
+    except (OSError, ValueError, TypeError, KeyError):
+        return []
+
+
+def _save_pending_orders(excel_path: Path, orders: list[Order]) -> None:
+    path = _pending_path(excel_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    payload = [_order_to_json(order) for order in orders]
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _remove_pending_file(excel_path: Path) -> None:
+    path = _pending_path(excel_path)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _merge_orders(existing: list[Order], incoming: list[Order]) -> list[Order]:
+    merged = {order.order_id: order for order in existing if order.order_id}
+    for order in incoming:
+        if not order.order_id:
+            continue
+        previous = merged.get(order.order_id)
+        if previous:
+            order = Order(
+                order_id=order.order_id,
+                order_date=order.order_date or previous.order_date,
+                item_description=_prefer_description(previous.item_description, order.item_description),
+                quantity=order.quantity or previous.quantity,
+                total_value=order.total_value if order.total_value is not None else previous.total_value,
+                currency=order.currency or previous.currency,
+                responsible=order.responsible or previous.responsible,
+                delivery_status=order.delivery_status or previous.delivery_status,
+                tracking_number=order.tracking_number or previous.tracking_number,
+                payment_method=_normalize_payment_method(order.payment_method)
+                or _normalize_payment_method(previous.payment_method),
+            )
+        merged[order.order_id] = order
+    return list(merged.values())
+
+
+def _prefer_description(previous: str, incoming: str) -> str:
+    previous = str(previous or "").strip()
+    incoming = str(incoming or "").strip()
+    if not incoming or incoming == "Não identificado":
+        return previous or "Não identificado"
+    if incoming.endswith("...") and previous and previous != "Não identificado":
+        return previous
+    return incoming
+
+
+def _order_to_json(order: Order) -> dict:
+    payload = asdict(order)
+    payload["order_date"] = order.order_date.isoformat() if order.order_date else None
+    payload["total_value"] = str(order.total_value) if order.total_value is not None else None
+    return payload
+
+
+def _order_from_json(payload: dict) -> Order:
+    order_date = date.fromisoformat(payload["order_date"]) if payload.get("order_date") else None
+    total_value = Decimal(payload["total_value"]) if payload.get("total_value") is not None else None
+    return Order(
+        order_id=str(payload.get("order_id") or ""),
+        order_date=order_date,
+        item_description=str(payload.get("item_description") or ""),
+        quantity=int(payload.get("quantity") or 1),
+        total_value=total_value,
+        currency=str(payload.get("currency") or ""),
+        responsible=str(payload.get("responsible") or ""),
+        delivery_status=str(payload.get("delivery_status") or ""),
+        tracking_number=str(payload.get("tracking_number") or ""),
+        payment_method=str(payload.get("payment_method") or ""),
+    )
 
 
 def _decimal_to_float(value: Decimal | None) -> float | None:

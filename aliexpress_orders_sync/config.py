@@ -22,6 +22,7 @@ class Settings:
     browser_executable: str | None
     ask_account: bool = True
     account_profiles_path: Path = Path("./contas.txt")
+    database_path: Path = Path("./data/pedidos.db")
 
 
 def _bool_from_env(value: str | None, default: bool) -> bool:
@@ -35,8 +36,12 @@ def load_settings(env_file: str | os.PathLike[str] | None = None) -> Settings:
 
     load_dotenv(env_file)
 
-    excel_path = Path(os.getenv("EXCEL_PATH", "./data/pedidos_aliexpress.xlsx")).expanduser()
-    session_dir = Path(os.getenv("ALIEXPRESS_SESSION_DIR", "./browser-session")).expanduser()
+    excel_path = Path(os.path.expandvars(os.getenv("EXCEL_PATH", "./data/pedidos_aliexpress.xlsx"))).expanduser()
+    session_dir = Path(
+        os.path.expandvars(
+            os.getenv("ALIEXPRESS_SESSION_DIR", r"%LOCALAPPDATA%\AliExpressPedidos\chrome-profile")
+        )
+    ).expanduser()
     interval_raw = os.getenv("CHECK_INTERVAL_MINUTES", "60")
 
     try:
@@ -62,7 +67,8 @@ def load_settings(env_file: str | os.PathLike[str] | None = None) -> Settings:
         cdp_url=os.getenv("CDP_URL", "").strip() or None,
         browser_executable=os.getenv("BROWSER_EXECUTABLE", "").strip() or None,
         ask_account=_bool_from_env(os.getenv("ASK_ACCOUNT"), True),
-        account_profiles_path=Path(os.getenv("ACCOUNT_PROFILES_PATH", "./contas.txt")).expanduser(),
+        account_profiles_path=Path(os.path.expandvars(os.getenv("ACCOUNT_PROFILES_PATH", "./contas.txt"))).expanduser(),
+        database_path=Path(os.path.expandvars(os.getenv("DATABASE_PATH", "./data/pedidos.db"))).expanduser(),
     )
 
 

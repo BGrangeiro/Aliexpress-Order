@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AliExpress Control</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260612-6" />
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+    <script src="/static/app.js?v=20260612-5" defer></script>
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark"><i data-lucide="package-search"></i></span>
+        <div class="brand-copy">
+          <strong>AliExpress</strong>
+          <span>Control</span>
+        </div>
+      </div>
+
+      <nav class="primary-nav" aria-label="Navegação principal">
+        <button class="nav-item active" type="button" data-view="overview" aria-label="Visão geral">
+          <i data-lucide="layout-dashboard"></i>
+          <span>Visão geral</span>
+        </button>
+        <button class="nav-item" type="button" data-view="orders" aria-label="Pedidos">
+          <i data-lucide="shopping-bag"></i>
+          <span>Pedidos</span>
+        </button>
+        <button class="nav-item" type="button" data-view="tracking" aria-label="Rastreios">
+          <i data-lucide="route"></i>
+          <span>Rastreios</span>
+          <span id="tracking-nav-count" class="nav-count">0</span>
+        </button>
+        <button class="nav-item" type="button" data-view="activity" aria-label="Atividade">
+          <i data-lucide="radio-tower"></i>
+          <span>Atividade</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-status">
+        <span class="live-indicator"></span>
+        <div>
+          <strong id="sidebar-status-value">Pronto</strong>
+          <span id="sidebar-status-detail">Agente disponível</span>
+        </div>
+      </div>
+    </aside>
+
+    <div class="app-frame">
+      <header class="topbar">
+        <div class="page-title">
+          <span id="page-eyebrow">Operação</span>
+          <h1 id="page-heading">Visão geral</h1>
+        </div>
+
+        <div class="topbar-actions">
+          <label class="account-control responsible-control">
+            <span>Responsável</span>
+            <select id="responsible-select" aria-label="Responsável"></select>
+          </label>
+          <label class="account-control">
+            <span>E-mail de acesso</span>
+            <select id="account-select" aria-label="E-mail de acesso"></select>
+          </label>
+          <button id="open-settings" class="icon-button" type="button" title="Configurações" aria-label="Configurações">
+            <i data-lucide="settings"></i>
+          </button>
+          <span id="connection-state" class="connection-state">
+            <span class="connection-dot"></span>
+            Online
+          </span>
+        </div>
+      </header>
+
+      <main class="main-content">
+        <section class="command-bar" aria-label="Comandos do agente">
+          <div class="agent-summary">
+            <span class="agent-icon"><i data-lucide="bot"></i></span>
+            <div>
+              <span>Agente AliExpress</span>
+              <strong id="status-value">Pronto</strong>
+              <small id="status-detail">Aguardando comando</small>
+            </div>
+          </div>
+          <div class="command-actions">
+            <button id="open-browser" class="button button-secondary" type="button">
+              <i data-lucide="panel-top-open"></i>
+              Abrir AliExpress
+            </button>
+            <button id="start-monitor" class="button button-primary" type="button">
+              <i data-lucide="play"></i>
+              Monitorar
+            </button>
+            <button id="stop-monitor" class="button button-danger" type="button" disabled>
+              <i data-lucide="square"></i>
+              Parar
+            </button>
+            <button id="full-sync" class="button button-secondary" type="button">
+              <i data-lucide="scan-search"></i>
+              Verificação completa
+            </button>
+          </div>
+        </section>
+
+        <section class="filters-section" aria-label="Filtros globais">
+          <div class="filters-header">
+            <div class="section-title-inline">
+              <i data-lucide="sliders-horizontal"></i>
+              <div>
+                <h2>Filtros globais</h2>
+                <span id="filter-summary">Todos os pedidos</span>
+              </div>
+            </div>
+            <div class="filter-actions">
+              <div class="date-presets" aria-label="Período rápido">
+                <button type="button" data-period="30">30 dias</button>
+                <button type="button" data-period="90">90 dias</button>
+                <button type="button" data-period="year">Este ano</button>
+                <button class="active" type="button" data-period="all">Tudo</button>
+              </div>
+              <button id="clear-filters" class="icon-button" type="button" title="Limpar filtros" aria-label="Limpar filtros">
+                <i data-lucide="filter-x"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="filter-grid">
+            <label class="field">
+              <span>E-mail</span>
+              <select id="filter-account"><option value="">Todos do responsável</option></select>
+            </label>
+            <label class="field">
+              <span>Status</span>
+              <select id="filter-status"><option value="">Todos</option></select>
+            </label>
+            <label class="field">
+              <span>Rastreio</span>
+              <select id="filter-tracking">
+                <option value="all">Todos</option>
+                <option value="multiple">Múltiplos</option>
+                <option value="single">Único</option>
+                <option value="none">Sem rastreio</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Pagamento</span>
+              <select id="filter-payment"><option value="">Todos</option></select>
+            </label>
+            <label class="field">
+              <span>Moeda</span>
+              <select id="filter-currency"><option value="">Todas</option></select>
+            </label>
+            <label class="field">
+              <span>Data inicial</span>
+              <input id="filter-date-from" type="date" />
+            </label>
+            <label class="field">
+              <span>Data final</span>
+              <input id="filter-date-to" type="date" />
+            </label>
+            <label class="field">
+              <span>Valor mínimo</span>
+              <input id="filter-min-total" type="number" min="0" step="0.01" placeholder="0,00" />
+            </label>
+            <label class="field">
+              <span>Valor máximo</span>
+              <input id="filter-max-total" type="number" min="0" step="0.01" placeholder="Sem limite" />
+            </label>
+            <label class="field search-field">
+              <span>Buscar</span>
+              <div class="input-with-icon">
+                <i data-lucide="search"></i>
+                <input id="filter-search" type="search" placeholder="Produto, pedido ou rastreio" />
+              </div>
+            </label>
+          </div>
+        </section>
+
+        <section id="view-overview" class="view-panel active">
+          <div class="kpi-grid">
+            <article class="kpi-card">
+              <span class="kpi-icon cyan"><i data-lucide="receipt-text"></i></span>
+              <div><span>Pedidos</span><strong id="kpi-orders">0</strong><small id="kpi-period">Período completo</small></div>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-icon green"><i data-lucide="circle-dollar-sign"></i></span>
+              <div><span>Volume total</span><strong id="kpi-volume">R$ 0,00</strong><small id="kpi-currency">Valores confirmados</small></div>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-icon blue"><i data-lucide="badge-dollar-sign"></i></span>
+              <div><span>Ticket médio</span><strong id="kpi-average">R$ 0,00</strong><small>Por pedido</small></div>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-icon violet"><i data-lucide="boxes"></i></span>
+              <div><span>Itens comprados</span><strong id="kpi-items">0</strong><small>Total de unidades</small></div>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-icon amber"><i data-lucide="truck"></i></span>
+              <div><span>Em andamento</span><strong id="kpi-progress">0</strong><small id="kpi-progress-rate">0% dos pedidos</small></div>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-icon red"><i data-lucide="package-x"></i></span>
+              <div><span>Cancelados</span><strong id="kpi-canceled">0</strong><small id="kpi-canceled-rate">0% dos pedidos</small></div>
+            </article>
+          </div>
+
+          <div class="analytics-grid">
+            <article class="panel panel-wide">
+              <div class="panel-heading">
+                <div><span>Evolução</span><h2>Pedidos e volume por mês</h2></div>
+                <span class="panel-badge" id="trend-total">0 pedidos</span>
+              </div>
+              <div class="chart-area"><canvas id="trend-chart"></canvas></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-heading">
+                <div><span>Operação</span><h2>Distribuição por status</h2></div>
+              </div>
+              <div class="donut-layout">
+                <div class="donut-wrap">
+                  <canvas id="status-chart"></canvas>
+                  <div class="donut-center"><strong id="status-total">0</strong><span>pedidos</span></div>
+                </div>
+                <div id="status-legend" class="chart-legend"></div>
+              </div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-heading">
+                <div><span>Contas</span><h2>Participação por responsável</h2></div>
+              </div>
+              <div id="accounts-ranking" class="ranking-list"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-heading">
+                <div><span>Pagamentos</span><h2>Métodos utilizados</h2></div>
+              </div>
+              <div id="payments-ranking" class="ranking-list"></div>
+            </article>
+
+            <article class="panel panel-wide">
+              <div class="panel-heading">
+                <div><span>Produtos</span><h2>Maiores volumes financeiros</h2></div>
+              </div>
+              <div id="products-ranking" class="products-ranking"></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="view-orders" class="view-panel">
+          <article class="panel table-panel">
+            <div class="panel-heading">
+              <div><span>Base de dados</span><h2>Todos os pedidos</h2></div>
+              <div class="panel-tools">
+                <span id="orders-count" class="panel-badge">0 registros</span>
+                <button id="refresh-orders" class="icon-button" type="button" title="Atualizar dados" aria-label="Atualizar dados">
+                  <i data-lucide="refresh-cw"></i>
+                </button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="orders-table">
+                <thead>
+                  <tr>
+                    <th>Data</th><th>Descrição</th><th>Qtd.</th><th>Valor total</th>
+                    <th>Unitário</th><th>Responsável</th><th>Conta</th><th>Status</th><th>Rastreio</th>
+                    <th>Pagamento</th><th>Pedido</th>
+                  </tr>
+                </thead>
+                <tbody id="orders-body"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
+        <section id="view-tracking" class="view-panel">
+          <div class="tracking-summary">
+            <article><i data-lucide="package-open"></i><span>Sem rastreio</span><strong id="tracking-none">0</strong></article>
+            <article><i data-lucide="package-check"></i><span>Rastreio único</span><strong id="tracking-single">0</strong></article>
+            <article><i data-lucide="boxes"></i><span>Múltiplos pacotes</span><strong id="tracking-multiple">0</strong></article>
+            <article><i data-lucide="scan-line"></i><span>Pedidos rastreados</span><strong id="tracking-total">0</strong></article>
+          </div>
+          <article class="panel table-panel">
+            <div class="panel-heading">
+              <div><span>Logística</span><h2>Rastreios por pedido</h2></div>
+              <span id="tracking-results" class="panel-badge">0 pedidos</span>
+            </div>
+            <div class="table-wrap">
+              <table class="tracking-table">
+                <thead>
+                  <tr><th>Pedido</th><th>Produto</th><th>Conta</th><th>Status</th><th>Pacotes</th><th>Códigos de rastreio</th></tr>
+                </thead>
+                <tbody id="tracking-body"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
+        <section id="view-activity" class="view-panel">
+          <div class="activity-layout">
+            <article class="panel activity-state-panel">
+              <div class="panel-heading">
+                <div><span>Agente</span><h2>Estado do monitoramento</h2></div>
+              </div>
+              <dl class="state-details">
+                <div><dt>Conta selecionada</dt><dd id="activity-account">-</dd></div>
+                <div><dt>Última verificação</dt><dd id="last-check-label">-</dd></div>
+                <div><dt>Próxima verificação</dt><dd id="next-check-label">-</dd></div>
+                <div><dt>Último resultado</dt><dd id="last-result-label">-</dd></div>
+                <div><dt>Banco local</dt><dd id="database-label">-</dd></div>
+              </dl>
+            </article>
+            <article class="panel log-panel">
+              <div class="panel-heading">
+                <div><span>Eventos</span><h2>Histórico de atividade</h2></div>
+                <button id="clear-visible-logs" class="icon-button" type="button" title="Limpar visualização" aria-label="Limpar visualização">
+                  <i data-lucide="eraser"></i>
+                </button>
+              </div>
+              <div id="activity-list" class="activity-list"></div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="settings-modal" class="modal-backdrop" hidden>
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <header class="modal-header">
+          <div class="modal-title-row">
+            <button id="settings-back" class="icon-button" type="button" title="Voltar" aria-label="Voltar para configurações" hidden>
+              <i data-lucide="arrow-left"></i>
+            </button>
+            <div>
+            <span>Configurações</span>
+              <h2 id="settings-title">Central de configurações</h2>
+            </div>
+          </div>
+          <button id="close-settings" class="icon-button" type="button" title="Fechar" aria-label="Fechar configurações">
+            <i data-lucide="x"></i>
+          </button>
+        </header>
+
+        <div id="settings-home" class="settings-home">
+          <button id="open-purchase-accounts" class="settings-menu-item" type="button">
+            <span class="settings-menu-icon"><i data-lucide="shopping-bag"></i></span>
+            <span>
+              <strong>Contas de compra</strong>
+              <small>Adicionar, editar e remover acessos da AliExpress</small>
+            </span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+        </div>
+
+        <div id="purchase-accounts-settings" class="settings-layout" hidden>
+          <div class="accounts-management">
+            <div class="settings-section-heading">
+              <h3>Contas cadastradas</h3>
+              <span id="accounts-total">0 contas</span>
+            </div>
+            <div id="settings-accounts-list" class="settings-accounts-list"></div>
+          </div>
+
+          <form id="account-form" class="account-form">
+            <input id="edit-account-key" type="hidden" />
+            <div class="settings-section-heading">
+              <h3 id="account-form-title">Nova conta</h3>
+              <button id="cancel-account-edit" class="text-button" type="button" hidden>Cancelar edição</button>
+            </div>
+            <label class="field">
+              <span>Responsável</span>
+              <select id="new-account-responsible" required></select>
+            </label>
+            <label class="field">
+              <span>Nome da conta</span>
+              <input id="new-account-name" type="text" maxlength="60" placeholder="Ex.: Conta principal" required />
+            </label>
+            <label class="field">
+              <span>E-mail</span>
+              <input id="new-account-email" type="email" maxlength="120" placeholder="email@exemplo.com" required />
+            </label>
+            <button id="account-submit" class="button button-primary account-submit" type="submit">
+              <i data-lucide="user-round-plus"></i>
+              <span>Adicionar conta</span>
+            </button>
+          </form>
+        </div>
+      </section>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

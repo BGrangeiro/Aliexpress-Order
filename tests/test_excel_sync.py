@@ -5,7 +5,8 @@ from decimal import Decimal
 
 from openpyxl import load_workbook
 
-from aliexpress_orders_sync.excel_sync import sync_orders_to_excel
+import aliexpress_orders_sync.excel_sync as excel_sync
+from aliexpress_orders_sync.excel_sync import sync_orders_to_excel, sync_orders_to_excel_resilient
 from aliexpress_orders_sync.models import Order
 
 
@@ -39,10 +40,11 @@ def test_sync_creates_updates_and_styles_workbook(tmp_path):
     assert sheet["B1"].value == "Descrição do Item"
     assert sheet["I1"].value == "Nº Rastreio"
     assert sheet["B2"].value == "Produto teste"
-    assert sheet["B2"].alignment.horizontal == "left"
+    assert sheet["B2"].alignment.horizontal == "center"
+    assert sheet["B2"].alignment.wrap_text is True
     assert sheet["A1"].alignment.horizontal == "center"
     assert sheet["A1"].alignment.wrap_text is True
-    assert sheet.column_dimensions["B"].width >= 36
+    assert sheet.column_dimensions["B"].width >= 70
     assert sheet["A2"].alignment.horizontal == "center"
     assert sheet["C2"].alignment.horizontal == "center"
     assert sheet["E2"].value == "=D2/C2"
@@ -135,6 +137,92 @@ def test_lightweight_update_preserves_existing_detail_columns(tmp_path):
     assert sheet["G2"].value == "Completed"
     assert sheet["I2"].value == "LP123456789CN"
     assert sheet["J2"].value == "Pix"
+
+
+def test_lightweight_update_preserves_existing_full_description(tmp_path):
+    excel_path = tmp_path / "pedidos.xlsx"
+    complete_order = Order(
+        order_id="1234567894",
+        order_date=date(2026, 6, 2),
+        item_description="Nome completo do produto com todas as especificações",
+        quantity=1,
+        total_value=Decimal("10.00"),
+        currency="BRL",
+        responsible="Conta A",
+        delivery_status="Awaiting delivery",
+        tracking_number="",
+    )
+    lightweight_order = Order(
+        **{
+            **complete_order.__dict__,
+            "item_description": "Nome curto",
+            "delivery_status": "Completed",
+        }
+    )
+
+    sync_orders_to_excel([complete_order], excel_path)
+    sync_orders_to_excel([lightweight_order], excel_path, preserve_existing_description=True)
+
+    workbook = load_workbook(excel_path, data_only=False)
+    sheet = workbook.active
+
+    assert sheet["B2"].value == "Nome completo do produto com todas as especificações"
+    assert sheet["G2"].value == "Completed"
+
+
+def test_invalid_payment_method_is_removed(tmp_path):
+    excel_path = tmp_path / "pedidos.xlsx"
+    order = Order(
+        order_id="1234567895",
+        order_date=date(2026, 6, 8),
+        item_description="Produto",
+        quantity=1,
+        total_value=Decimal("62.33"),
+        currency="BRL",
+        responsible="riquelme",
+        delivery_status="Canceled",
+        tracking_number="",
+        payment_method="Pedido feito em: 8 jun, 2026",
+    )
+
+    sync_orders_to_excel([order], excel_path)
+    workbook = load_workbook(excel_path, data_only=False)
+    sheet = workbook.active
+
+    assert sheet["J2"].value in {"", None}
+
+
+def test_resilient_sync_queues_orders_when_workbook_is_locked(tmp_path, monkeypatch):
+    excel_path = tmp_path / "pedidos.xlsx"
+    order = Order(
+        order_id="queued-order",
+        order_date=date(2026, 6, 8),
+        item_description="Produto aguardando",
+        quantity=1,
+        total_value=Decimal("62.33"),
+        currency="BRL",
+        responsible="riquelme",
+        delivery_status="Canceled",
+        tracking_number="",
+    )
+    original_sync = excel_sync.sync_orders_to_excel
+
+    def locked_sync(*_args, **_kwargs):
+        raise PermissionError(13, "Permission denied", str(excel_path))
+
+    monkeypatch.setattr(excel_sync, "sync_orders_to_excel", locked_sync)
+    created, updated, queued = sync_orders_to_excel_resilient([order], excel_path)
+
+    assert (created, updated, queued) == (0, 0, 1)
+    assert (tmp_path / ".pedidos.pending.json").exists()
+
+    monkeypatch.setattr(excel_sync, "sync_orders_to_excel", original_sync)
+    created, updated, queued = sync_orders_to_excel_resilient([], excel_path)
+
+    assert (created, updated, queued) == (1, 0, 0)
+    assert not (tmp_path / ".pedidos.pending.json").exists()
+    workbook = load_workbook(excel_path, data_only=False)
+    assert workbook.active["H2"].value == "queued-order"
 
 
 def test_sync_sorts_by_date_and_removes_orders_before_2026(tmp_path):

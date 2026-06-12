@@ -5,7 +5,7 @@ import time
 
 from .accounts import choose_account
 from .config import load_settings
-from .excel_sync import sync_orders_to_excel
+from .excel_sync import sync_orders_to_excel_resilient
 from .scraper import BrowserConnectionError, ensure_browser_is_open, fetch_orders, login, open_browser
 
 
@@ -59,7 +59,13 @@ def _sync_once(settings) -> None:
             print("python -m aliexpress_orders_sync.main open-browser")
             return
 
-    created, updated = sync_orders_to_excel(orders, settings.excel_path)
+    created, updated, queued = sync_orders_to_excel_resilient(orders, settings.excel_path)
+    if queued:
+        print(
+            f"A planilha está aberta. {queued} pedido(s) foram guardados e serão aplicados "
+            "automaticamente após fechar o Excel."
+        )
+        return
     print(
         f"Sincronização concluída: {len(orders)} pedido(s) lido(s), "
         f"{created} novo(s), {updated} atualizado(s)."

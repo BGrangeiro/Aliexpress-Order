@@ -7,7 +7,7 @@ from decimal import Decimal
 
 @dataclass(frozen=True)
 class Order:
-    """Normalized AliExpress order data used by the spreadsheet sync layer."""
+    """Normalized AliExpress order data shared by persistence layers."""
 
     order_id: str
     order_date: date | None

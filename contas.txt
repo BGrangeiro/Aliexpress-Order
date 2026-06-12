@@ -1,11 +1,12 @@
-# Arquivo simples de contas AliExpress.
 # Formato:
-# id|email|responsavel_na_planilha|pasta_de_sessao
-#
-# O responsavel_na_planilha é o texto que vai aparecer na coluna "Responsável".
-# A pasta_de_sessao separa cookies/login de cada conta.
-# Não apague as pastas de sessão, porque elas guardam o login/cookies.
-# Exemplo de adição de conta: conta3|emaildeterceiraconta@gmail.com|nome_na_planilha|./chrome-session-conta-3
+# id|email|responsavel|pasta_de_sessao|nome_da_conta
 
-conta1|riquelmesenna577@gmail.com|riquelme|./chrome-session-conta-1
-conta2|riquelmestayler@gmail.com|neto|./chrome-session-conta-2
+jeferson-1|jeferson.teste1@example.com|Jeferson|C:\Users\User\AppData\Local\AliExpressPedidos\chrome-profile|Jeferson - Conta 1
+jeferson-2|jeferson.teste2@example.com|Jeferson|C:\Users\User\AppData\Local\AliExpressPedidos\chrome-profile|Jeferson - Conta 2
+jeferson-3|jeferson.teste3@example.com|Jeferson|C:\Users\User\AppData\Local\AliExpressPedidos\chrome-profile|Jeferson - Conta 3
+riquelme-1|riquelmesenna577@gmail.com|Riquelme|C:\Users\User\AppData\Local\AliExpressPedidos\chrome-profile|Riquelme - Principal
+riquelme-2|riquelme.teste2@example.com|Riquelme|C:\Users\User\AppData\Local\AliExpressPedidos\chrome-profile|Riquelme - alr
+neto-1|riquelmestayler@gmail.com|Neto|C:\Users\User\AppData\Local\AliExpressPedidos\chrome-profile|Neto - Principal00
+neto-2|neto.teste2@example.com|Neto|C:\Users\User\AppData\Local\AliExpressPedidos\chrome-profile|Neto - Conta 2
+neto-3|neto.teste3@example.com|Neto|C:\Users\User\AppData\Local\AliExpressPedidos\chrome-profile|Neto - Conta 3
+riquelme-8f79de2d|lindo@gmail.com|Riquelme|C:\Users\User\AppData\Local\AliExpressPedidos\chrome-profile|lindao

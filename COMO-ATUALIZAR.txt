@@ -1,0 +1,9 @@
+ATUALIZACAO SEM APAGAR A PLANILHA
+
+1. Feche o AliExpressPedidosWeb no computador.
+2. Abra a pasta antiga AliExpressPedidosWeb.
+3. Extraia o conteudo desta atualizacao dentro da pasta antiga.
+4. Confirme a substituicao dos arquivos.
+5. Nao apague a pasta data nem os arquivos .env e contas.txt.
+6. Abra AliExpressPedidosWeb.exe novamente.
+7. Execute uma Verificacao completa para atualizar nomes, datas e pagamentos antigos.
